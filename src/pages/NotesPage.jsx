@@ -80,10 +80,12 @@ function NotesPage() {
         const { data: { user } } = await supabase.auth.getUser();
 
         try {
-            // 1. Загружаем аудио файл в Supabase Storage
+            // ВАРИАНТ 1: С использованием Storage (требует создания bucket)
+            // Раскомментируйте этот блок после создания bucket в Supabase
+            /*
             const fileName = `voice_note_${Date.now()}.webm`;
             const { error: uploadError } = await supabase.storage
-                .from('voice-notes') // Убедитесь, что bucket создан в Supabase
+                .from('voice-notes')
                 .upload(`${user.id}/${fileName}`, audioBlob, {
                     contentType: audioBlob.type,
                     upsert: false
@@ -91,17 +93,28 @@ function NotesPage() {
 
             if (uploadError) throw uploadError;
 
-            // 2. Получаем публичный URL
             const { data: urlData } = supabase.storage
                 .from('voice-notes')
                 .getPublicUrl(`${user.id}/${fileName}`);
 
-            // 3. Сохраняем запись в БД
+            const audioUrl = urlData.publicUrl;
+            */
+
+            // ВАРИАНТ 2: Сохранение как Base64 (работает без bucket)
+            // Конвертируем blob в base64
+            const reader = new FileReader();
+            const base64Audio = await new Promise((resolve, reject) => {
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(audioBlob);
+            });
+
+            // Сохраняем запись в БД с base64
             const { error: insertError } = await supabase
                 .from('notes')
                 .insert([{
                     content: `🎤 Голосовая заметка (${formatTime(recordingTime)})`,
-                    audio_url: urlData.publicUrl,
+                    audio_url: base64Audio, // Сохраняем base64 вместо URL
                     user_id: user.id,
                     type: 'voice'
                 }]);
@@ -125,8 +138,9 @@ function NotesPage() {
     const handleDeleteNote = async (noteId, audioUrl) => {
         if (!window.confirm("Удалить эту заметку?")) return;
 
-        // Если это голосовая заметка, удаляем и файл
-        if (audioUrl) {
+        // Если это голосовая заметка из Storage, удаляем файл
+        // (Только если вы используете Storage, а не base64)
+        if (audioUrl && audioUrl.startsWith('http')) {
             const filePath = audioUrl.split('/voice-notes/')[1];
             if (filePath) {
                 await supabase.storage
