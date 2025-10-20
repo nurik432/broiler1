@@ -82,7 +82,7 @@ function NotesPage() {
         try {
             // 1. Загружаем аудио файл в Supabase Storage
             const fileName = `voice_note_${Date.now()}.webm`;
-            const { data: uploadData, error: uploadError } = await supabase.storage
+            const { error: uploadError } = await supabase.storage
                 .from('voice-notes') // Убедитесь, что bucket создан в Supabase
                 .upload(`${user.id}/${fileName}`, audioBlob, {
                     contentType: audioBlob.type,
