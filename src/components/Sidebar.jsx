@@ -42,6 +42,9 @@ function Sidebar({ isOpen, setIsOpen }) {
           <NavLink to="/salaries" className={({ isActive }) => `${linkClass} ${isActive ? activeLinkClass : 'hover:bg-gray-100'}`} onClick={() => setIsOpen(false)}>
             <span className="mx-4 font-medium">Сотрудники и ЗП</span>
           </NavLink>
+          <NavLink to="/notes" className={({ isActive }) => `${linkClass} ${isActive ? activeLinkClass : 'hover:bg-gray-100'}`} onClick={() => setIsOpen(false)}>
+            <span className="mx-4 font-medium">Заметки</span>
+          </NavLink>
         </nav>
       </div>
     </>
