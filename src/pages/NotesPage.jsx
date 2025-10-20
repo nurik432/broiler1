@@ -41,8 +41,8 @@ function NotesPage() {
         const { error } = await supabase.from('notes').insert([{ content: newNoteContent, user_id: user.id }]);
         if (error) alert(error.message);
         else {
-            setNewNoteContent(''); // Очищаем поле
-            await fetchNotes(); // Обновляем список
+            setNewNoteContent('');
+            await fetchNotes();
         }
         setIsSubmitting(false);
     };
@@ -74,18 +74,24 @@ function NotesPage() {
                         <button type="submit" disabled={isSubmitting || !newNoteContent.trim()} className="px-6 py-2 bg-indigo-600 text-white font-semibold rounded-md hover:bg-indigo-700 disabled:bg-gray-400">
                             {isSubmitting ? 'Сохранение...' : 'Сохранить'}
                         </button>
-                        {/* Кнопка для голосового ввода */}
+
+                        {/* --- УЛУЧШЕННЫЙ БЛОК ДЛЯ ГОЛОСОВОГО ВВОДА --- */}
                         {isSupported ? (
-                            <button
-                                type="button"
-                                onClick={isListening ? stopListening : startListening}
-                                className={`p-2 rounded-full transition-colors ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-                                title={isListening ? "Остановить запись" : "Начать голосовой ввод"}
-                            >
-                                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8h-1a6 6 0 11-12 0H3a7.001 7.001 0 006 6.93V17H7v1h6v-1h-2v-2.07z" clipRule="evenodd"></path></svg>
-                            </button>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={isListening ? stopListening : startListening}
+                                    className={`flex-shrink-0 p-3 rounded-full transition-colors ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                                    title={isListening ? "Остановить запись" : "Начать голосовой ввод"}
+                                >
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8h-1a6 6 0 11-12 0H3a7.001 7.001 0 006 6.93V17H7v1h6v-1h-2v-2.07z" clipRule="evenodd"></path></svg>
+                                </button>
+                                {isListening && <p className="text-sm text-red-500 font-medium">Идет запись...</p>}
+                            </div>
                         ) : (
-                             <p className="text-sm text-gray-500">Голосовой ввод не поддерживается в вашем браузере.</p>
+                             <p className="text-sm text-gray-500 p-2 bg-gray-100 rounded-md">
+                                Голосовой ввод не поддерживается на вашем устройстве.
+                             </p>
                         )}
                     </div>
                 </form>
