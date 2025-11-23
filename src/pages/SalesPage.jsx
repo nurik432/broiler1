@@ -119,7 +119,7 @@ function SalesPage() {
                                             <td className="p-2"><input type="text" value={editFormData.customer_name} onChange={e => setEditFormData({...editFormData, customer_name: e.target.value})} className="p-1 border rounded w-full"/></td>
                                             <td className="p-2"><input type="number" step="0.01" value={editFormData.weight_kg} onChange={e => setEditFormData({...editFormData, weight_kg: e.target.value})} className="p-1 border rounded w-24"/></td>
                                             <td className="p-2"><input type="number" step="0.01" value={editFormData.price_per_kg} onChange={e => setEditFormData({...editFormData, price_per_kg: e.target.value})} className="p-1 border rounded w-24"/></td>
-                                            <td className="px-6 py-4 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(editFormData.weight_kg * editFormData.price_per_kg)}</td>
+                                            <td className="px-6 py-4 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(editFormData.weight_kg * editFormData.price_per_kg)}</td>
                                             <td className="px-6 py-4 text-right flex gap-2"><button onClick={() => handleUpdate(sale.id)} className="font-medium text-green-600">Сохранить</button><button onClick={() => setEditingId(null)} className="font-medium text-gray-500">Отмена</button></td>
                                         </>
                                     ) : (
@@ -127,8 +127,8 @@ function SalesPage() {
                                             <td className="px-6 py-4">{new Date(sale.sale_date).toLocaleDateString()}</td>
                                             <td className="px-6 py-4 font-medium text-gray-900">{sale.customer_name || '–'}</td>
                                             <td className="px-6 py-4">{sale.weight_kg} кг</td>
-                                            <td className="px-6 py-4">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(sale.price_per_kg)}</td>
-                                            <td className="px-6 py-4 font-semibold text-green-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(total)}</td>
+                                            <td className="px-6 py-4">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.price_per_kg)}</td>
+                                            <td className="px-6 py-4 font-semibold text-green-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(total)}</td>
                                             <td className="px-6 py-4 text-right flex gap-4 justify-end"><button onClick={() => handleEditClick(sale)} className="font-medium text-blue-600">Редактировать</button><button onClick={() => handleDelete(sale.id)} className="font-medium text-red-600">Удалить</button></td>
                                         </>
                                     )}
