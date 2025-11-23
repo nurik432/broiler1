@@ -13,6 +13,7 @@ import BatchLogPage from './pages/BatchLogPage';
 import ExpensesPage from './pages/ExpensesPage';
 import SalariesPage from './pages/SalariesPage';
 import NotesPage from './pages/NotesPage';
+import SalesPage from './pages/SalesPage';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -52,6 +53,7 @@ function App() {
         {/* Страница журнала партии теперь тоже внутри MainLayout, чтобы у нее была навигация */}
         <Route path="/batch/:batchId" element={<BatchLogPage />} />
         <Route path="/notes" element={<NotesPage />} />
+        <Route path="/sales" element={<SalesPage />} />
       </Route>
     </Routes>
   );
