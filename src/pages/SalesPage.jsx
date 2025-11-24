@@ -4,41 +4,119 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 
 function SalesPage() {
-    const [sales, setSales] = useState([]);
+    // --- ОСНОВНЫЕ СОСТОЯНИЯ ---
+    const [allSales, setAllSales] = useState([]); // Хранит ВСЕ продажи из БД
+    const [filteredSales, setFilteredSales] = useState([]); // Хранит продажи для отображения в таблице
     const [loading, setLoading] = useState(true);
 
-    // Состояния для формы добавления продажи
+    // --- Состояния для формы добавления ---
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
     const [customer, setCustomer] = useState('');
     const [weight, setWeight] = useState('');
     const [price, setPrice] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Состояния для модального окна платежей
+    // --- Состояния для модального окна ---
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedSale, setSelectedSale] = useState(null);
     const [modalPayments, setModalPayments] = useState([]);
     const [paymentAmount, setPaymentAmount] = useState('');
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
 
-    // 1. Загрузка данных о продажах с помощью RPC-функции
+    // --- Состояния для фильтра и отчета ---
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+    const [reportData, setReportData] = useState(null);
+
+    // 1. Загрузка данных
     const fetchSales = async () => {
         setLoading(true);
         const { data, error } = await supabase.rpc('get_sales_with_stats');
         if (error) {
-            console.error('Ошибка при загрузке продаж:', error);
+            console.error('Ошибка:', error);
             alert('Не удалось загрузить данные о продажах.');
         } else {
-            setSales(data);
+            setAllSales(data);
+            setFilteredSales(data);
         }
         setLoading(false);
     };
 
     useEffect(() => {
+        const today = new Date();
+        const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+        const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
+        setStartDate(firstDay);
+        setEndDate(lastDay);
         fetchSales();
     }, []);
 
-    // 2. Функция для открытия модального окна и загрузки платежей
+    // 2. Формирование отчета
+    const handleGenerateReport = () => {
+        if (!startDate || !endDate) {
+            alert("Пожалуйста, выберите начальную и конечную дату.");
+            return;
+        }
+
+        const filtered = allSales.filter(sale => sale.sale_date >= startDate && sale.sale_date <= endDate);
+        setFilteredSales(filtered);
+
+        const totals = filtered.reduce((acc, sale) => {
+            acc.totalSales += sale.total_amount;
+            acc.totalPayments += sale.total_paid;
+            acc.totalBalance += sale.balance;
+            return acc;
+        }, { totalSales: 0, totalPayments: 0, totalBalance: 0 });
+
+        setReportData(totals);
+    };
+
+    // 3. Сброс фильтра
+    const handleResetFilter = () => {
+        setFilteredSales(allSales);
+        setReportData(null);
+    };
+
+    // 4. Добавление новой ПРОДАЖИ
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setIsSubmitting(true);
+        const { data: { user } } = await supabase.auth.getUser();
+        const { error } = await supabase.from('sales').insert([{ sale_date: date, customer_name: customer, weight_kg: Number(weight), price_per_kg: Number(price), user_id: user.id }]);
+        if (error) {
+            alert(error.message);
+        } else {
+            setDate(new Date().toISOString().slice(0, 10));
+            setCustomer(''); setWeight(''); setPrice('');
+            await fetchSales();
+            setReportData(null); // Сбрасываем отчет
+        }
+        setIsSubmitting(false);
+    };
+
+    // 5. Добавление нового ПЛАТЕЖА
+    const handleAddPayment = async (e) => {
+        e.preventDefault();
+        if (!paymentAmount || !selectedSale) return;
+        const { data: { user } } = await supabase.auth.getUser();
+        const { error } = await supabase.from('payments').insert([{ sale_id: selectedSale.id, payment_date: paymentDate, amount: Number(paymentAmount), user_id: user.id }]);
+        if (error) {
+            alert(error.message);
+        } else {
+            setPaymentAmount('');
+            await fetchSales();
+            setReportData(null); // Сбрасываем отчет
+
+            const { data: updatedPayments } = await supabase.from('payments').select('*').eq('sale_id', selectedSale.id).order('payment_date', { ascending: false });
+            setModalPayments(updatedPayments);
+
+            const { data: updatedSales } = await supabase.rpc('get_sales_with_stats');
+            const updatedSaleData = updatedSales.find(s => s.id === selectedSale.id);
+            setSelectedSale(updatedSaleData);
+        }
+    };
+
+    // 6. Открытие модального окна
     const openPaymentsModal = async (sale) => {
         setSelectedSale(sale);
         setIsModalOpen(true);
@@ -51,63 +129,25 @@ function SalesPage() {
         }
     };
 
-    // 3. Функция для добавления нового ПЛАТЕЖА
-    const handleAddPayment = async (e) => {
-        e.preventDefault();
-        if (!paymentAmount || !selectedSale) return;
-        const { data: { user } } = await supabase.auth.getUser();
-
-        const { error } = await supabase.from('payments').insert([{
-            sale_id: selectedSale.id,
-            payment_date: paymentDate,
-            amount: Number(paymentAmount),
-            user_id: user.id
-        }]);
-
-        if (error) {
-            alert(error.message);
-        } else {
-            setPaymentAmount('');
-            // Обновляем всю информацию после добавления платежа
-            await fetchSales();
-
-            // Обновляем данные в модальном окне, чтобы не закрывать его
-            const { data: updatedPayments } = await supabase.from('payments').select('*').eq('sale_id', selectedSale.id).order('payment_date', { ascending: false });
-            setModalPayments(updatedPayments);
-
-            const { data: updatedSales } = await supabase.rpc('get_sales_with_stats');
-            const updatedSaleData = updatedSales.find(s => s.id === selectedSale.id);
-            setSelectedSale(updatedSaleData);
-        }
-    };
-
-    // 4. Функция для добавления новой ПРОДАЖИ
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setIsSubmitting(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        const { error } = await supabase.from('sales').insert([{
-            sale_date: date,
-            customer_name: customer,
-            weight_kg: Number(weight),
-            price_per_kg: Number(price),
-            user_id: user.id
-        }]);
-        if (error) {
-            alert(error.message);
-        } else {
-            setDate(new Date().toISOString().slice(0, 10));
-            setCustomer('');
-            setWeight('');
-            setPrice('');
-            await fetchSales();
-        }
-        setIsSubmitting(false);
-    };
-
     return (
         <div>
             <h1 className="text-3xl font-bold text-gray-800 mb-6">Учет продаж и поступлений</h1>
+
+            <div className="bg-white p-6 rounded-lg shadow-md mb-8">
+                <h2 className="text-2xl font-semibold mb-4">Отчет по продажам</h2>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                    <div><label className="block text-sm font-medium">С</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div><label className="block text-sm font-medium">По</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div className="flex gap-2"><button onClick={handleGenerateReport} className="w-full bg-blue-600 text-white p-2 rounded-md hover:bg-blue-700">Сформировать</button><button onClick={handleResetFilter} title="Сбросить фильтр" className="bg-gray-200 text-gray-700 p-2 rounded-md hover:bg-gray-300">✕</button></div>
+                </div>
+                {reportData && (
+                    <div className="mt-4 p-4 bg-indigo-50 rounded-lg grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                        <div><p className="text-sm text-gray-500">Общая сумма продаж</p><p className="font-bold text-lg">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(reportData.totalSales)}</p></div>
+                        <div><p className="text-sm text-gray-500">Всего получено платежей</p><p className="font-bold text-lg text-green-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(reportData.totalPayments)}</p></div>
+                        <div><p className="text-sm text-gray-500">Общий остаток</p><p className="font-bold text-lg text-red-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(reportData.totalBalance)}</p></div>
+                    </div>
+                )}
+            </div>
 
             <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                 <h2 className="text-2xl font-semibold mb-4">Добавить продажу</h2>
@@ -124,36 +164,23 @@ function SalesPage() {
                 <table className="w-full text-sm text-left">
                     <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
                         <tr>
-                            <th className="px-6 py-3">Дата / Покупатель</th>
-                            <th className="px-6 py-3">Сумма продажи</th>
-                            <th className="px-6 py-3">Оплачено</th>
-                            <th className="px-6 py-3">Статус</th>
+                            <th className="px-6 py-3">Дата / Покупатель</th><th className="px-6 py-3">Сумма продажи</th>
+                            <th className="px-6 py-3">Оплачено</th><th className="px-6 py-3">Статус</th>
                             <th className="px-6 py-3 text-right">Действия</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {loading ? ( <tr><td colSpan="5" className="text-center py-4">Загрузка данных...</td></tr> ) :
-                        sales.map(sale => (
+                        {loading ? ( <tr><td colSpan="5" className="text-center py-4">Загрузка...</td></tr> ) :
+                        filteredSales.map(sale => (
                             <tr key={sale.id} className="border-b hover:bg-gray-50">
-                                <td className="px-6 py-4">
-                                    <p className="font-medium text-gray-900">{new Date(sale.sale_date).toLocaleDateString()}</p>
-                                    <p className="text-gray-500">{sale.customer_name || 'Частная продажа'}</p>
-                                </td>
+                                <td className="px-6 py-4"><p className="font-medium text-gray-900">{new Date(sale.sale_date).toLocaleDateString()}</p><p className="text-gray-500">{sale.customer_name || 'Частная продажа'}</p></td>
                                 <td className="px-6 py-4 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.total_amount)}</td>
                                 <td className="px-6 py-4 font-semibold text-green-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.total_paid)}</td>
-                                <td className="px-6 py-4">
-                                    {sale.balance <= 0 ? (
-                                        <span className="px-3 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full">Выплачено</span>
-                                    ) : (
-                                        <span className="px-3 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full">Остаток: {new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.balance)}</span>
-                                    )}
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                    <button onClick={() => openPaymentsModal(sale)} className="font-medium text-blue-600 hover:underline">Платежи</button>
-                                </td>
+                                <td className="px-6 py-4">{sale.balance <= 0 ? (<span className="px-3 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full">Выплачено</span>) : (<span className="px-3 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full">Остаток: {new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.balance)}</span>)}</td>
+                                <td className="px-6 py-4 text-right"><button onClick={() => openPaymentsModal(sale)} className="font-medium text-blue-600 hover:underline">Платежи</button></td>
                             </tr>
                         ))}
-                         { !loading && sales.length === 0 && (<tr><td colSpan="5" className="text-center py-4 text-gray-500">Записей о продажах пока нет.</td></tr>) }
+                         { !loading && filteredSales.length === 0 && (<tr><td colSpan="5" className="text-center py-4 text-gray-500">Продаж за выбранный период не найдено.</td></tr>) }
                     </tbody>
                 </table>
             </div>
@@ -175,18 +202,11 @@ function SalesPage() {
                             </form>
                             <h4 className="font-semibold mt-6 mb-2">История платежей:</h4>
                             <div className="space-y-2 max-h-48 overflow-y-auto border rounded p-2">
-                                {modalPayments.map(p => (
-                                    <div key={p.id} className="flex justify-between p-2 bg-gray-50 rounded">
-                                        <span>{new Date(p.payment_date).toLocaleDateString()}</span>
-                                        <span className="font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(p.amount)}</span>
-                                    </div>
-                                ))}
+                                {modalPayments.map(p => (<div key={p.id} className="flex justify-between p-2 bg-gray-50 rounded"><span>{new Date(p.payment_date).toLocaleDateString()}</span><span className="font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(p.amount)}</span></div>))}
                                 {modalPayments.length === 0 && <p className="text-gray-500 text-center py-4">Платежей пока нет.</p>}
                             </div>
                         </div>
-                        <div className="p-4 bg-gray-50 text-right rounded-b-lg">
-                            <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Закрыть</button>
-                        </div>
+                        <div className="p-4 bg-gray-50 text-right rounded-b-lg"><button onClick={() => setIsModalOpen(false)} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Закрыть</button></div>
                     </div>
                 </div>
             )}
