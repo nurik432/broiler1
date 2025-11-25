@@ -5,7 +5,8 @@ import { supabase } from '../supabaseClient';
 
 function SalesPage() {
     // --- ОСНОВНЫЕ СОСТОЯНИЯ ---
-    const [sales, setSales] = useState([]);
+    const [allSales, setAllSales] = useState([]);
+    const [filteredSales, setFilteredSales] = useState([]);
     const [loading, setLoading] = useState(true);
 
     // --- Состояния для формы ДОБАВЛЕНИЯ ПРОДАЖИ ---
@@ -30,6 +31,11 @@ function SalesPage() {
     const [editingPaymentId, setEditingPaymentId] = useState(null);
     const [editPaymentFormData, setEditPaymentFormData] = useState({});
 
+    // --- Состояния для ФИЛЬТРА И ОТЧЕТА ---
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+    const [reportData, setReportData] = useState(null);
+
     // --- ФУНКЦИИ ---
 
     // 1. Загрузка данных
@@ -37,50 +43,73 @@ function SalesPage() {
         setLoading(true);
         const { data, error } = await supabase.rpc('get_sales_with_stats');
         if (error) { console.error('Ошибка:', error); }
-        else { setSales(data); }
+        else {
+            setAllSales(data);
+            setFilteredSales(data);
+        }
         setLoading(false);
     };
 
-    useEffect(() => { fetchSales(); }, []);
+    useEffect(() => {
+        const today = new Date();
+        const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+        const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
+        setStartDate(firstDay);
+        setEndDate(lastDay);
+        fetchSales();
+    }, []);
 
-    // 2. Функции для управления ПРОДАЖАМИ (CRUD)
+    // 2. Формирование отчета
+    const handleGenerateReport = () => {
+        if (!startDate || !endDate) { alert("Выберите даты."); return; }
+        const filtered = allSales.filter(sale => sale.sale_date >= startDate && sale.sale_date <= endDate);
+        setFilteredSales(filtered);
+        const totals = filtered.reduce((acc, sale) => {
+            acc.totalSales += sale.total_amount;
+            acc.totalPayments += sale.total_paid;
+            acc.totalBalance += sale.balance;
+            return acc;
+        }, { totalSales: 0, totalPayments: 0, totalBalance: 0 });
+        setReportData(totals);
+    };
+
+    // 3. Сброс фильтра
+    const handleResetFilter = () => {
+        setFilteredSales(allSales);
+        setReportData(null);
+    };
+
+    // --- CRUD ПРОДАЖ ---
     const handleSubmitSale = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
         const { data: { user } } = await supabase.auth.getUser();
         const { error } = await supabase.from('sales').insert([{ sale_date: date, customer_name: customer, weight_kg: Number(weight), price_per_kg: Number(price), user_id: user.id }]);
         if (error) { alert(error.message); }
-        else { setDate(new Date().toISOString().slice(0, 10)); setCustomer(''); setWeight(''); setPrice(''); await fetchSales(); }
+        else { setDate(new Date().toISOString().slice(0, 10)); setCustomer(''); setWeight(''); setPrice(''); await fetchSales(); handleResetFilter(); }
         setIsSubmitting(false);
     };
-
-    const handleEditSaleClick = (sale) => {
-        setEditingSaleId(sale.id);
-        setEditSaleFormData({ sale_date: sale.sale_date, customer_name: sale.customer_name || '', weight_kg: sale.weight_kg, price_per_kg: sale.price_per_kg });
-    };
-
+    const handleEditSaleClick = (sale) => { setEditingSaleId(sale.id); setEditSaleFormData({ sale_date: sale.sale_date, customer_name: sale.customer_name || '', weight_kg: sale.weight_kg, price_per_kg: sale.price_per_kg }); };
     const handleUpdateSale = async (saleId) => {
         const { error } = await supabase.from('sales').update({ ...editSaleFormData, weight_kg: Number(editSaleFormData.weight_kg), price_per_kg: Number(editSaleFormData.price_per_kg) }).eq('id', saleId);
         if (error) { alert(error.message); }
-        else { setEditingSaleId(null); await fetchSales(); }
+        else { setEditingSaleId(null); await fetchSales(); handleResetFilter(); }
     };
-
     const handleDeleteSale = async (saleId) => {
-        if (window.confirm("Вы уверены, что хотите удалить всю продажу и ВСЕ связанные с ней платежи? Это действие необратимо.")) {
+        if (window.confirm("Удалить продажу и все связанные платежи?")) {
             const { error } = await supabase.from('sales').delete().eq('id', saleId);
             if (error) { alert(error.message); }
-            else { await fetchSales(); }
+            else { await fetchSales(); handleResetFilter(); }
         }
     };
 
-    // 3. Функции для управления ПЛАТЕЖАМИ (в модальном окне)
+    // --- CRUD ПЛАТЕЖЕЙ ---
     const openPaymentsModal = async (sale) => {
         setSelectedSale(sale);
         setIsModalOpen(true);
         const { data, error } = await supabase.from('payments').select('*').eq('sale_id', sale.id).order('payment_date', { ascending: false });
         if (error) { setModalPayments([]); } else { setModalPayments(data); }
     };
-
     const handleAddPayment = async (e) => {
         e.preventDefault();
         if (!paymentAmount || !selectedSale) return;
@@ -90,37 +119,34 @@ function SalesPage() {
         else {
             setPaymentAmount('');
             await fetchSales();
+            handleResetFilter();
             const { data: updatedPayments } = await supabase.from('payments').select('*').eq('sale_id', selectedSale.id).order('payment_date', { ascending: false });
             setModalPayments(updatedPayments);
             const { data: updatedSales } = await supabase.rpc('get_sales_with_stats');
             setSelectedSale(updatedSales.find(s => s.id === selectedSale.id));
         }
     };
-
-    const handleEditPaymentClick = (payment) => {
-        setEditingPaymentId(payment.id);
-        setEditPaymentFormData({ payment_date: payment.payment_date, amount: payment.amount });
-    };
-
+    const handleEditPaymentClick = (payment) => { setEditingPaymentId(payment.id); setEditPaymentFormData({ payment_date: payment.payment_date, amount: payment.amount }); };
     const handleUpdatePayment = async (paymentId) => {
         const { error } = await supabase.from('payments').update({ ...editPaymentFormData, amount: Number(editPaymentFormData.amount) }).eq('id', paymentId);
         if (error) { alert(error.message); }
         else {
             setEditingPaymentId(null);
             await fetchSales();
+            handleResetFilter();
             const { data: updatedPayments } = await supabase.from('payments').select('*').eq('sale_id', selectedSale.id).order('payment_date', { ascending: false });
             setModalPayments(updatedPayments);
             const { data: updatedSales } = await supabase.rpc('get_sales_with_stats');
             setSelectedSale(updatedSales.find(s => s.id === selectedSale.id));
         }
     };
-
     const handleDeletePayment = async (paymentId) => {
-        if (window.confirm("Удалить этот платеж?")) {
+        if (window.confirm("Удалить платеж?")) {
             const { error } = await supabase.from('payments').delete().eq('id', paymentId);
             if (error) { alert(error.message); }
             else {
                 await fetchSales();
+                handleResetFilter();
                 const { data: updatedPayments } = await supabase.from('payments').select('*').eq('sale_id', selectedSale.id).order('payment_date', { ascending: false });
                 setModalPayments(updatedPayments);
                 const { data: updatedSales } = await supabase.rpc('get_sales_with_stats');
@@ -132,6 +158,22 @@ function SalesPage() {
     return (
         <div>
             <h1 className="text-3xl font-bold text-gray-800 mb-6">Учет продаж и поступлений</h1>
+
+            <div className="bg-white p-6 rounded-lg shadow-md mb-8">
+                <h2 className="text-2xl font-semibold mb-4">Отчет по продажам</h2>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                    <div><label className="block text-sm font-medium">С</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div><label className="block text-sm font-medium">По</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div className="flex gap-2"><button onClick={handleGenerateReport} className="w-full bg-blue-600 text-white p-2 rounded-md hover:bg-blue-700">Сформировать</button><button onClick={handleResetFilter} title="Сбросить фильтр" className="bg-gray-200 text-gray-700 p-2 rounded-md hover:bg-gray-300">✕</button></div>
+                </div>
+                {reportData && (
+                    <div className="mt-4 p-4 bg-indigo-50 rounded-lg grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                        <div><p className="text-sm text-gray-500">Общая сумма продаж</p><p className="font-bold text-lg">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(reportData.totalSales)}</p></div>
+                        <div><p className="text-sm text-gray-500">Всего получено платежей</p><p className="font-bold text-lg text-green-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(reportData.totalPayments)}</p></div>
+                        <div><p className="text-sm text-gray-500">Общий остаток</p><p className="font-bold text-lg text-red-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(reportData.totalBalance)}</p></div>
+                    </div>
+                )}
+            </div>
 
             <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                 <h2 className="text-2xl font-semibold mb-4">Добавить продажу</h2>
@@ -148,23 +190,19 @@ function SalesPage() {
                 <table className="w-full text-sm text-left">
                     <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
                         <tr>
-                            <th className="px-6 py-3">Дата / Покупатель</th>
-                            <th className="px-6 py-3">Вес (кг)</th>
-                            <th className="px-6 py-3">Цена за кг</th>
-                            <th className="px-6 py-3">Сумма продажи</th>
-                            <th className="px-6 py-3">Оплачено</th>
-                            <th className="px-6 py-3">Статус</th>
+                            <th className="px-6 py-3">Дата / Покупатель</th><th className="px-6 py-3">Вес (кг)</th><th className="px-6 py-3">Цена за кг</th>
+                            <th className="px-6 py-3">Сумма продажи</th><th className="px-6 py-3">Оплачено</th><th className="px-6 py-3">Статус</th>
                             <th className="px-6 py-3 text-right">Действия</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading ? ( <tr><td colSpan="7" className="text-center py-4">Загрузка...</td></tr> ) :
-                        sales.map(sale => (
+                        filteredSales.map(sale => (
                             <tr key={sale.id} className="border-b hover:bg-gray-50">
                                 {editingSaleId === sale.id ? (
                                     <>
                                         <td className="p-2"><input type="date" value={editSaleFormData.sale_date} onChange={e => setEditSaleFormData({...editSaleFormData, sale_date: e.target.value})} className="p-1 border rounded w-full"/></td>
-                                        <td className="p-2" colSpan="1"><input type="text" value={editSaleFormData.customer_name} onChange={e => setEditSaleFormData({...editSaleFormData, customer_name: e.target.value})} className="p-1 border rounded w-full"/></td>
+                                        <td className="p-2"><input type="text" value={editSaleFormData.customer_name} onChange={e => setEditSaleFormData({...editSaleFormData, customer_name: e.target.value})} className="p-1 border rounded w-full"/></td>
                                         <td className="p-2"><input type="number" step="0.01" value={editSaleFormData.weight_kg} onChange={e => setEditSaleFormData({...editSaleFormData, weight_kg: e.target.value})} className="p-1 border rounded w-24"/></td>
                                         <td className="p-2"><input type="number" step="0.01" value={editSaleFormData.price_per_kg} onChange={e => setEditSaleFormData({...editSaleFormData, price_per_kg: e.target.value})} className="p-1 border rounded w-24"/></td>
                                         <td className="px-6 py-4 font-semibold" colSpan="3">
@@ -191,7 +229,7 @@ function SalesPage() {
                                 )}
                             </tr>
                         ))}
-                        { !loading && sales.length === 0 && (<tr><td colSpan="7" className="text-center py-4">Записей о продажах пока нет.</td></tr>) }
+                        { !loading && filteredSales.length === 0 && (<tr><td colSpan="7" className="text-center py-4 text-gray-500">Записей о продажах не найдено.</td></tr>) }
                     </tbody>
                 </table>
             </div>
