@@ -136,7 +136,11 @@ function SalesPage() {
             <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                 <h2 className="text-2xl font-semibold mb-4">Добавить продажу</h2>
                 <form onSubmit={handleSubmitSale} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-                    {/* ... форма добавления ... */}
+                    <div><label className="block text-sm font-medium">Дата</label><input type="date" value={date} onChange={e => setDate(e.target.value)} required className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div className="md:col-span-2"><label className="block text-sm font-medium">Покупатель</label><input type="text" placeholder="Имя или название" value={customer} onChange={e => setCustomer(e.target.value)} className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div><label className="block text-sm font-medium">Вес (кг)</label><input type="number" step="0.01" placeholder="10.5" value={weight} onChange={e => setWeight(e.target.value)} required className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div><label className="block text-sm font-medium">Цена за кг</label><input type="number" step="0.01" placeholder="300" value={price} onChange={e => setPrice(e.target.value)} required className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <button type="submit" disabled={isSubmitting} className="w-full bg-indigo-600 text-white p-2 rounded-md hover:bg-indigo-700 disabled:bg-gray-400 md:col-span-5">{isSubmitting ? 'Добавление...' : 'Добавить'}</button>
                 </form>
             </div>
 
@@ -145,7 +149,6 @@ function SalesPage() {
                     <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
                         <tr>
                             <th className="px-6 py-3">Дата / Покупатель</th>
-                            {/* --- ИЗМЕНЕНИЕ: Вернули колонки --- */}
                             <th className="px-6 py-3">Вес (кг)</th>
                             <th className="px-6 py-3">Цена за кг</th>
                             <th className="px-6 py-3">Сумма продажи</th>
@@ -155,32 +158,31 @@ function SalesPage() {
                         </tr>
                     </thead>
                     <tbody>
-                        {loading ? ( <tr><td colSpan="7">Загрузка...</td></tr> ) :
+                        {loading ? ( <tr><td colSpan="7" className="text-center py-4">Загрузка...</td></tr> ) :
                         sales.map(sale => (
                             <tr key={sale.id} className="border-b hover:bg-gray-50">
                                 {editingSaleId === sale.id ? (
                                     <>
                                         <td className="p-2"><input type="date" value={editSaleFormData.sale_date} onChange={e => setEditSaleFormData({...editSaleFormData, sale_date: e.target.value})} className="p-1 border rounded w-full"/></td>
-                                        <td className="p-2" colSpan="2"><input type="text" value={editSaleFormData.customer_name} onChange={e => setEditSaleFormData({...editSaleFormData, customer_name: e.target.value})} className="p-1 border rounded w-full"/></td>
+                                        <td className="p-2" colSpan="1"><input type="text" value={editSaleFormData.customer_name} onChange={e => setEditSaleFormData({...editSaleFormData, customer_name: e.target.value})} className="p-1 border rounded w-full"/></td>
                                         <td className="p-2"><input type="number" step="0.01" value={editSaleFormData.weight_kg} onChange={e => setEditSaleFormData({...editSaleFormData, weight_kg: e.target.value})} className="p-1 border rounded w-24"/></td>
                                         <td className="p-2"><input type="number" step="0.01" value={editSaleFormData.price_per_kg} onChange={e => setEditSaleFormData({...editSaleFormData, price_per_kg: e.target.value})} className="p-1 border rounded w-24"/></td>
-                                        <td className="px-6 py-4" colSpan="2" >
+                                        <td className="px-6 py-4 font-semibold" colSpan="3">
                                             <div className="flex gap-2 justify-end">
-                                                <button onClick={() => handleUpdateSale(sale.id)} className="font-medium text-green-600">Сохранить</button>
-                                                <button onClick={() => setEditingSaleId(null)} className="font-medium text-gray-500">Отмена</button>
+                                                <button onClick={() => handleUpdateSale(sale.id)} className="font-medium text-green-600 hover:underline">Сохранить</button>
+                                                <button onClick={() => setEditingSaleId(null)} className="font-medium text-gray-500 hover:underline">Отмена</button>
                                             </div>
                                         </td>
                                     </>
                                 ) : (
                                     <>
                                         <td className="px-6 py-4"><p className="font-medium">{new Date(sale.sale_date).toLocaleDateString()}</p><p className="text-gray-500">{sale.customer_name || '–'}</p></td>
-                                        {/* --- ИЗМЕНЕНИЕ: Вернули ячейки --- */}
                                         <td className="px-6 py-4">{sale.weight_kg} кг</td>
                                         <td className="px-6 py-4">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.price_per_kg)}</td>
                                         <td className="px-6 py-4 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.total_amount)}</td>
                                         <td className="px-6 py-4 font-semibold text-green-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.total_paid)}</td>
                                         <td className="px-6 py-4">{sale.balance <= 0 ? (<span className="px-3 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full">Выплачено</span>) : (<span className="px-3 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full">Остаток: {new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.balance)}</span>)}</td>
-                                        <td className="px-6 py-4 text-right flex gap-4 justify-end">
+                                        <td className="px-6 py-4 text-right flex flex-col sm:flex-row gap-2 sm:gap-4 justify-end">
                                             <button onClick={() => openPaymentsModal(sale)} className="font-medium text-blue-600 hover:underline">Платежи</button>
                                             <button onClick={() => handleEditSaleClick(sale)} className="font-medium text-yellow-600 hover:underline">Изменить</button>
                                             <button onClick={() => handleDeleteSale(sale.id)} className="font-medium text-red-600 hover:underline">Удалить</button>
@@ -189,6 +191,7 @@ function SalesPage() {
                                 )}
                             </tr>
                         ))}
+                        { !loading && sales.length === 0 && (<tr><td colSpan="7" className="text-center py-4">Записей о продажах пока нет.</td></tr>) }
                     </tbody>
                 </table>
             </div>
@@ -196,20 +199,23 @@ function SalesPage() {
             {isModalOpen && selectedSale && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
-                        {/* ... заголовок модального окна и сводка ... */}
+                        <div className="p-6 border-b"><h3 className="text-xl font-semibold">Платежи по продаже</h3><p className="text-sm text-gray-500">от {new Date(selectedSale.sale_date).toLocaleDateString()} (Покупатель: {selectedSale.customer_name || 'Не указан'})</p></div>
+                        <div className="p-6 grid grid-cols-3 gap-4 text-center border-b">
+                            <div><p className="text-sm text-gray-500">Всего к оплате</p><p className="font-bold text-lg">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(selectedSale.total_amount)}</p></div>
+                            <div><p className="text-sm text-gray-500">Оплачено</p><p className="font-bold text-lg text-green-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(selectedSale.total_paid)}</p></div>
+                            <div><p className="text-sm text-gray-500">Остаток</p><p className="font-bold text-lg text-red-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(selectedSale.balance)}</p></div>
+                        </div>
                         <div className="p-6">
                             <form onSubmit={handleAddPayment} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end mb-4">
                                 <div className="sm:col-span-1"><label className="text-sm">Дата</label><input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} required className="w-full p-2 border rounded"/></div>
                                 <div><label className="text-sm">Сумма</label><input type="number" step="0.01" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} required className="w-full p-2 border rounded"/></div>
                                 <button type="submit" className="bg-green-600 text-white p-2 rounded hover:bg-green-700">Добавить</button>
                             </form>
-                            {/* --- НОВОЕ: Кнопка "Всю сумму" --- */}
                             {selectedSale.balance > 0 && (
                                 <div className="text-right -mt-2 mb-4">
                                     <button onClick={() => setPaymentAmount(selectedSale.balance)} className="text-xs text-blue-600 hover:underline">внести остаток ({selectedSale.balance} TJS)</button>
                                 </div>
                             )}
-
                             <h4 className="font-semibold mt-6 mb-2">История платежей:</h4>
                             <div className="space-y-2 max-h-48 overflow-y-auto border rounded p-2">
                                 {modalPayments.map(p => (
@@ -223,23 +229,16 @@ function SalesPage() {
                                             </div>
                                         ) : (
                                             <div className="flex justify-between items-center">
-                                                <div>
-                                                    <span>{new Date(p.payment_date).toLocaleDateString()}</span>
-                                                    <span className="font-semibold ml-4">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(p.amount)}</span>
-                                                </div>
-                                                <div className="flex gap-3">
-                                                    <button onClick={() => handleEditPaymentClick(p)} className="text-xs text-yellow-600 hover:underline">Изм.</button>
-                                                    <button onClick={() => handleDeletePayment(p.id)} className="text-xs text-red-600 hover:underline">Удал.</button>
-                                                </div>
+                                                <div><span>{new Date(p.payment_date).toLocaleDateString()}</span><span className="font-semibold ml-4">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(p.amount)}</span></div>
+                                                <div className="flex gap-3"><button onClick={() => handleEditPaymentClick(p)} className="text-xs text-yellow-600 hover:underline">Изм.</button><button onClick={() => handleDeletePayment(p.id)} className="text-xs text-red-600 hover:underline">Удал.</button></div>
                                             </div>
                                         )}
                                     </div>
                                 ))}
+                                {modalPayments.length === 0 && <p className="text-gray-500 text-center py-4">Платежей пока нет.</p>}
                             </div>
                         </div>
-                        <div className="p-4 bg-gray-50 text-right rounded-b-lg">
-                            <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Закрыть</button>
-                        </div>
+                        <div className="p-4 bg-gray-50 text-right rounded-b-lg"><button onClick={() => setIsModalOpen(false)} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Закрыть</button></div>
                     </div>
                 </div>
             )}
