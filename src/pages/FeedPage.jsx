@@ -7,12 +7,15 @@ function FeedPage() {
     const [deliveries, setDeliveries] = useState([]);
     const [loading, setLoading] = useState(true);
 
-    // Состояние для сводки (фильтра)
+    // Состояние для сводки по типам
     const [feedTotals, setFeedTotals] = useState({ start: 0, growth: 0, finish: 0 });
+
+    // Состояние для хранения общего количества
+    const [totalFeed, setTotalFeed] = useState(0);
 
     // Состояния для формы добавления
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-    const [feedType, setFeedType] = useState('старт'); // Значение по умолчанию
+    const [feedType, setFeedType] = useState('старт');
     const [quantity, setQuantity] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -20,7 +23,7 @@ function FeedPage() {
     const [editingId, setEditingId] = useState(null);
     const [editFormData, setEditFormData] = useState({});
 
-    // 1. Загрузка данных и расчет сводки
+    // 1. Загрузка данных и расчет сводок
     const fetchData = async () => {
         setLoading(true);
         const { data, error } = await supabase.from('feed_deliveries').select('*').order('delivery_date', { ascending: false });
@@ -31,7 +34,7 @@ function FeedPage() {
         } else {
             setDeliveries(data);
 
-            // Расчет итогов для сводки
+            // Расчет итогов по типам
             const totals = data.reduce((acc, delivery) => {
                 if (delivery.feed_type === 'старт') acc.start += delivery.quantity_kg;
                 else if (delivery.feed_type === 'рост') acc.growth += delivery.quantity_kg;
@@ -39,6 +42,10 @@ function FeedPage() {
                 return acc;
             }, { start: 0, growth: 0, finish: 0 });
             setFeedTotals(totals);
+
+            // Расчет общей суммы всех видов корма
+            const totalSum = totals.start + totals.growth + totals.finish;
+            setTotalFeed(totalSum);
         }
         setLoading(false);
     };
@@ -61,7 +68,7 @@ function FeedPage() {
         if (error) { alert(error.message); }
         else {
             setQuantity('');
-            await fetchData();
+            await fetchData(); // Перезагружаем данные, чтобы обновить сводки
         }
         setIsSubmitting(false);
     };
@@ -92,10 +99,14 @@ function FeedPage() {
 
             <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                 <h2 className="text-2xl font-semibold mb-4">Сводка по корму (всего)</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-                    <div><p className="text-sm text-gray-500">Старт</p><p className="font-bold text-2xl text-blue-600">{feedTotals.start} кг</p></div>
-                    <div><p className="text-sm text-gray-500">Рост</p><p className="font-bold text-2xl text-green-600">{feedTotals.growth} кг</p></div>
-                    <div><p className="text-sm text-gray-500">Финиш</p><p className="font-bold text-2xl text-yellow-600">{feedTotals.finish} кг</p></div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                    <div><p className="text-sm text-gray-500">Старт</p><p className="font-bold text-xl md:text-2xl text-blue-600">{feedTotals.start} кг</p></div>
+                    <div><p className="text-sm text-gray-500">Рост</p><p className="font-bold text-xl md:text-2xl text-green-600">{feedTotals.growth} кг</p></div>
+                    <div><p className="text-sm text-gray-500">Финиш</p><p className="font-bold text-xl md:text-2xl text-yellow-600">{feedTotals.finish} кг</p></div>
+                    <div className="bg-gray-100 p-2 rounded-lg">
+                        <p className="text-sm font-semibold text-gray-700">Всего</p>
+                        <p className="font-bold text-xl md:text-2xl text-gray-900">{totalFeed} кг</p>
+                    </div>
                 </div>
             </div>
 
