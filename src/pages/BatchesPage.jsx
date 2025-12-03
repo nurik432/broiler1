@@ -116,14 +116,27 @@ function BatchesPage() {
                                     <p className="text-sm text-gray-500">Начало: {new Date(batch.start_date).toLocaleDateString()}</p>
                                 </div>
                                 <div className="flex items-center gap-4 sm:gap-6">
-                                    <div className="text-center"><span className="text-xs sm:text-sm text-gray-500">Текущее поголовье</span><p className="font-bold text-xl sm:text-2xl text-green-600">{batch.current_quantity}</p></div>
+                                    <div className="text-center"><span className="text-xs sm:text-sm text-gray-500">Итоговое поголовье</span><p className="font-bold text-xl sm:text-2xl text-green-600">{batch.current_quantity}</p></div>
                                     <div className="text-center"><span className="text-xs sm:text-sm text-gray-500">Общий падеж</span><p className="font-bold text-xl sm:text-2xl text-red-600">{batch.total_mortality}</p></div>
-                                    <Link to={`/batch/${batch.id}`} className="px-4 py-2 text-sm font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600 self-center">Журнал</Link>
-                                    {view === 'active' ? (
-                                        <button onClick={() => handleToggleBatchStatus(batch.id, false)} className="px-4 py-2 text-sm font-medium text-white bg-red-500 rounded-md hover:bg-red-600">Завершить</button>
-                                    ) : (
-                                        <button onClick={() => handleToggleBatchStatus(batch.id, true)} className="px-4 py-2 text-sm font-medium text-white bg-green-500 rounded-md hover:bg-green-600">Восстановить</button>
-                                    )}
+
+                                    <div className="flex flex-col sm:flex-row gap-2">
+                                        <Link to={`/batch/${batch.id}`} className="px-4 py-2 text-sm text-center font-medium text-white bg-gray-500 rounded-md hover:bg-gray-600">Журнал</Link>
+
+                                        {/* --- БЛОК С УСЛОВНЫМИ КНОПКАМИ --- */}
+                                        {view === 'active' ? (
+                                            <button onClick={() => handleToggleBatchStatus(batch.id, false)} className="px-4 py-2 text-sm font-medium text-white bg-red-500 rounded-md hover:bg-red-600">Завершить</button>
+                                        ) : (
+                                            <>
+                                                {/* --- ВОТ НОВАЯ КНОПКА "ОТЧЕТ" --- */}
+                                                <Link to={`/batch/${batch.id}/report`} className="px-4 py-2 text-sm text-center font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600">
+                                                    Отчет
+                                                </Link>
+                                                <button onClick={() => handleToggleBatchStatus(batch.id, true)} className="px-4 py-2 text-sm font-medium text-white bg-green-500 rounded-md hover:bg-green-600">
+                                                    Восстановить
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         ))}

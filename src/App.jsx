@@ -15,6 +15,7 @@ import SalariesPage from './pages/SalariesPage';
 import NotesPage from './pages/NotesPage';
 import SalesPage from './pages/SalesPage';
 import FeedPage from './pages/FeedPage';
+import BatchReportPage from './pages/BatchReportPage';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -56,6 +57,7 @@ function App() {
         <Route path="/notes" element={<NotesPage />} />
         <Route path="/sales" element={<SalesPage />} />
         <Route path="/feed" element={<FeedPage />} />
+        <Route path="/batch/:batchId/report" element={<BatchReportPage />} />
       </Route>
     </Routes>
   );

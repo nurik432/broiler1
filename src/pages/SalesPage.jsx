@@ -8,12 +8,14 @@ function SalesPage() {
     const [allSales, setAllSales] = useState([]);
     const [filteredSales, setFilteredSales] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [activeBatches, setActiveBatches] = useState([]);
 
-    // --- Состояния для формы ДОБАВЛЕНИЯ ПРОДАЖИ ---
+    // --- Состояния для формы ДОБАВЛЕНИЯ ---
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
     const [customer, setCustomer] = useState('');
     const [weight, setWeight] = useState('');
     const [price, setPrice] = useState('');
+    const [selectedBatchId, setSelectedBatchId] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // --- Состояния для РЕДАКТИРОВАНИЯ ПРОДАЖИ ---
@@ -38,15 +40,22 @@ function SalesPage() {
 
     // --- ФУНКЦИИ ---
 
-    // 1. Загрузка данных
-    const fetchSales = async () => {
+    const fetchAllData = async () => {
         setLoading(true);
-        const { data, error } = await supabase.rpc('get_sales_with_stats');
-        if (error) { console.error('Ошибка:', error); }
+        const [salesResponse, batchesResponse] = await Promise.all([
+            supabase.rpc('get_sales_with_stats'),
+            supabase.from('broiler_batches').select('id, batch_name').eq('is_active', true)
+        ]);
+
+        if (salesResponse.error) { console.error('Ошибка загрузки продаж:', salesResponse.error); }
         else {
-            setAllSales(data);
-            setFilteredSales(data);
+            setAllSales(salesResponse.data);
+            setFilteredSales(salesResponse.data);
         }
+
+        if (batchesResponse.error) { console.error("Ошибка загрузки партий:", batchesResponse.error); }
+        else { setActiveBatches(batchesResponse.data); }
+
         setLoading(false);
     };
 
@@ -56,10 +65,9 @@ function SalesPage() {
         const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
         setStartDate(firstDay);
         setEndDate(lastDay);
-        fetchSales();
+        fetchAllData();
     }, []);
 
-    // 2. Формирование отчета
     const handleGenerateReport = () => {
         if (!startDate || !endDate) { alert("Выберите даты."); return; }
         const filtered = allSales.filter(sale => sale.sale_date >= startDate && sale.sale_date <= endDate);
@@ -73,43 +81,46 @@ function SalesPage() {
         setReportData(totals);
     };
 
-    // 3. Сброс фильтра
     const handleResetFilter = () => {
         setFilteredSales(allSales);
         setReportData(null);
     };
 
-    // --- CRUD ПРОДАЖ ---
     const handleSubmitSale = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
         const { data: { user } } = await supabase.auth.getUser();
-        const { error } = await supabase.from('sales').insert([{ sale_date: date, customer_name: customer, weight_kg: Number(weight), price_per_kg: Number(price), user_id: user.id }]);
+        const { error } = await supabase.from('sales').insert([{ sale_date: date, customer_name: customer, weight_kg: Number(weight), price_per_kg: Number(price), user_id: user.id, batch_id: selectedBatchId || null }]);
         if (error) { alert(error.message); }
-        else { setDate(new Date().toISOString().slice(0, 10)); setCustomer(''); setWeight(''); setPrice(''); await fetchSales(); handleResetFilter(); }
+        else {
+            setDate(new Date().toISOString().slice(0, 10)); setCustomer(''); setWeight(''); setPrice(''); setSelectedBatchId('');
+            await fetchAllData();
+            handleResetFilter();
+        }
         setIsSubmitting(false);
     };
-    const handleEditSaleClick = (sale) => { setEditingSaleId(sale.id); setEditSaleFormData({ sale_date: sale.sale_date, customer_name: sale.customer_name || '', weight_kg: sale.weight_kg, price_per_kg: sale.price_per_kg }); };
+
+    const handleEditSaleClick = (sale) => { setEditingSaleId(sale.id); setEditSaleFormData({ sale_date: sale.sale_date, customer_name: sale.customer_name || '', weight_kg: sale.weight_kg, price_per_kg: sale.price_per_kg, batch_id: sale.batch_id || '' }); };
     const handleUpdateSale = async (saleId) => {
-        const { error } = await supabase.from('sales').update({ ...editSaleFormData, weight_kg: Number(editSaleFormData.weight_kg), price_per_kg: Number(editSaleFormData.price_per_kg) }).eq('id', saleId);
+        const { error } = await supabase.from('sales').update({ ...editSaleFormData, weight_kg: Number(editSaleFormData.weight_kg), price_per_kg: Number(editSaleFormData.price_per_kg), batch_id: editSaleFormData.batch_id || null }).eq('id', saleId);
         if (error) { alert(error.message); }
-        else { setEditingSaleId(null); await fetchSales(); handleResetFilter(); }
+        else { setEditingSaleId(null); await fetchAllData(); handleResetFilter(); }
     };
     const handleDeleteSale = async (saleId) => {
         if (window.confirm("Удалить продажу и все связанные платежи?")) {
             const { error } = await supabase.from('sales').delete().eq('id', saleId);
             if (error) { alert(error.message); }
-            else { await fetchSales(); handleResetFilter(); }
+            else { await fetchAllData(); handleResetFilter(); }
         }
     };
 
-    // --- CRUD ПЛАТЕЖЕЙ ---
     const openPaymentsModal = async (sale) => {
         setSelectedSale(sale);
         setIsModalOpen(true);
         const { data, error } = await supabase.from('payments').select('*').eq('sale_id', sale.id).order('payment_date', { ascending: false });
         if (error) { setModalPayments([]); } else { setModalPayments(data); }
     };
+
     const handleAddPayment = async (e) => {
         e.preventDefault();
         if (!paymentAmount || !selectedSale) return;
@@ -118,39 +129,47 @@ function SalesPage() {
         if (error) { alert(error.message); }
         else {
             setPaymentAmount('');
-            await fetchSales();
+            await fetchAllData();
             handleResetFilter();
             const { data: updatedPayments } = await supabase.from('payments').select('*').eq('sale_id', selectedSale.id).order('payment_date', { ascending: false });
             setModalPayments(updatedPayments);
-            const { data: updatedSales } = await supabase.rpc('get_sales_with_stats');
-            setSelectedSale(updatedSales.find(s => s.id === selectedSale.id));
+            const salesResponse = await supabase.rpc('get_sales_with_stats');
+            const updatedSaleData = salesResponse.data.find(s => s.id === selectedSale.id);
+            setSelectedSale(updatedSaleData);
         }
     };
+
     const handleEditPaymentClick = (payment) => { setEditingPaymentId(payment.id); setEditPaymentFormData({ payment_date: payment.payment_date, amount: payment.amount }); };
+
     const handleUpdatePayment = async (paymentId) => {
         const { error } = await supabase.from('payments').update({ ...editPaymentFormData, amount: Number(editPaymentFormData.amount) }).eq('id', paymentId);
-        if (error) { alert(error.message); }
-        else {
+        if (error) {
+            alert(error.message);
+        } else {
             setEditingPaymentId(null);
-            await fetchSales();
+            await fetchAllData();
             handleResetFilter();
             const { data: updatedPayments } = await supabase.from('payments').select('*').eq('sale_id', selectedSale.id).order('payment_date', { ascending: false });
             setModalPayments(updatedPayments);
-            const { data: updatedSales } = await supabase.rpc('get_sales_with_stats');
-            setSelectedSale(updatedSales.find(s => s.id === selectedSale.id));
+            const salesResponse = await supabase.rpc('get_sales_with_stats');
+            const updatedSaleData = salesResponse.data.find(s => s.id === selectedSale.id);
+            setSelectedSale(updatedSaleData);
         }
     };
+
     const handleDeletePayment = async (paymentId) => {
-        if (window.confirm("Удалить платеж?")) {
+        if (window.confirm("Удалить этот платеж?")) {
             const { error } = await supabase.from('payments').delete().eq('id', paymentId);
-            if (error) { alert(error.message); }
-            else {
-                await fetchSales();
+            if (error) {
+                alert(error.message);
+            } else {
+                await fetchAllData();
                 handleResetFilter();
                 const { data: updatedPayments } = await supabase.from('payments').select('*').eq('sale_id', selectedSale.id).order('payment_date', { ascending: false });
                 setModalPayments(updatedPayments);
-                const { data: updatedSales } = await supabase.rpc('get_sales_with_stats');
-                setSelectedSale(updatedSales.find(s => s.id === selectedSale.id));
+                const salesResponse = await supabase.rpc('get_sales_with_stats');
+                const updatedSaleData = salesResponse.data.find(s => s.id === selectedSale.id);
+                setSelectedSale(updatedSaleData);
             }
         }
     };
@@ -179,33 +198,48 @@ function SalesPage() {
                 <h2 className="text-2xl font-semibold mb-4">Добавить продажу</h2>
                 <form onSubmit={handleSubmitSale} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                     <div><label className="block text-sm font-medium">Дата</label><input type="date" value={date} onChange={e => setDate(e.target.value)} required className="mt-1 w-full p-2 border rounded-md"/></div>
-                    <div className="md:col-span-2"><label className="block text-sm font-medium">Покупатель</label><input type="text" placeholder="Имя или название" value={customer} onChange={e => setCustomer(e.target.value)} className="mt-1 w-full p-2 border rounded-md"/></div>
-                    <div><label className="block text-sm font-medium">Вес (кг)</label><input type="number" step="0.01" placeholder="10.5" value={weight} onChange={e => setWeight(e.target.value)} required className="mt-1 w-full p-2 border rounded-md"/></div>
-                    <div><label className="block text-sm font-medium">Цена за кг</label><input type="number" step="0.01" placeholder="300" value={price} onChange={e => setPrice(e.target.value)} required className="mt-1 w-full p-2 border rounded-md"/></div>
-                    <button type="submit" disabled={isSubmitting} className="w-full bg-indigo-600 text-white p-2 rounded-md hover:bg-indigo-700 disabled:bg-gray-400 md:col-span-5">{isSubmitting ? 'Добавление...' : 'Добавить'}</button>
+                    <div className="md:col-span-1"><label className="block text-sm font-medium">Покупатель</label><input type="text" value={customer} onChange={e => setCustomer(e.target.value)} className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div><label className="block text-sm font-medium">Вес (кг)</label><input type="number" step="0.01" value={weight} onChange={e => setWeight(e.target.value)} required className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div><label className="block text-sm font-medium">Цена за кг</label><input type="number" step="0.01" value={price} onChange={e => setPrice(e.target.value)} required className="mt-1 w-full p-2 border rounded-md"/></div>
+                    <div className="md:col-span-1"><label className="block text-sm font-medium">К Партии</label>
+                        <select value={selectedBatchId} onChange={e => setSelectedBatchId(e.target.value)} className="mt-1 w-full p-2 border rounded bg-white">
+                            <option value="">-- Не привязывать --</option>
+                            {activeBatches.map(b => <option key={b.id} value={b.id}>{b.batch_name}</option>)}
+                        </select>
+                    </div>
+                    <button type="submit" disabled={isSubmitting} className="w-full bg-indigo-600 text-white p-2 rounded-md md:col-span-5">{isSubmitting ? 'Добавление...' : 'Добавить'}</button>
                 </form>
             </div>
 
             <div className="bg-white rounded-lg shadow-md overflow-x-auto">
                 <table className="w-full text-sm text-left">
-                    <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
+                    <thead className="bg-gray-50 text-xs uppercase">
                         <tr>
-                            <th className="px-6 py-3">Дата / Покупатель</th><th className="px-6 py-3">Вес (кг)</th><th className="px-6 py-3">Цена за кг</th>
-                            <th className="px-6 py-3">Сумма продажи</th><th className="px-6 py-3">Оплачено</th><th className="px-6 py-3">Статус</th>
+                            <th className="px-6 py-3">Дата/Время/Партия</th><th className="px-6 py-3">Покупатель</th>
+                            <th className="px-6 py-3">Вес/Цена</th><th className="px-6 py-3">Сумма</th>
+                            <th className="px-6 py-3">Оплачено</th><th className="px-6 py-3">Статус</th>
                             <th className="px-6 py-3 text-right">Действия</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading ? ( <tr><td colSpan="7" className="text-center py-4">Загрузка...</td></tr> ) :
                         filteredSales.map(sale => (
-                            <tr key={sale.id} className="border-b hover:bg-gray-50">
+                            <tr key={sale.id} className="border-b">
                                 {editingSaleId === sale.id ? (
                                     <>
                                         <td className="p-2"><input type="date" value={editSaleFormData.sale_date} onChange={e => setEditSaleFormData({...editSaleFormData, sale_date: e.target.value})} className="p-1 border rounded w-full"/></td>
                                         <td className="p-2"><input type="text" value={editSaleFormData.customer_name} onChange={e => setEditSaleFormData({...editSaleFormData, customer_name: e.target.value})} className="p-1 border rounded w-full"/></td>
-                                        <td className="p-2"><input type="number" step="0.01" value={editSaleFormData.weight_kg} onChange={e => setEditSaleFormData({...editSaleFormData, weight_kg: e.target.value})} className="p-1 border rounded w-24"/></td>
-                                        <td className="p-2"><input type="number" step="0.01" value={editSaleFormData.price_per_kg} onChange={e => setEditSaleFormData({...editSaleFormData, price_per_kg: e.target.value})} className="p-1 border rounded w-24"/></td>
-                                        <td className="px-6 py-4 font-semibold" colSpan="3">
+                                        <td className="p-2">
+                                            <input type="number" step="0.01" value={editSaleFormData.weight_kg} onChange={e => setEditSaleFormData({...editSaleFormData, weight_kg: e.target.value})} className="p-1 border rounded w-24 mb-1"/>
+                                            <input type="number" step="0.01" value={editSaleFormData.price_per_kg} onChange={e => setEditSaleFormData({...editSaleFormData, price_per_kg: e.target.value})} className="p-1 border rounded w-24"/>
+                                        </td>
+                                        <td className="p-2" colSpan="2">
+                                            <select value={editSaleFormData.batch_id} onChange={e => setEditSaleFormData({...editSaleFormData, batch_id: e.target.value})} className="p-1 border rounded w-full bg-white">
+                                                <option value="">-- Не привязывать --</option>
+                                                {activeBatches.map(b => <option key={b.id} value={b.id}>{b.batch_name}</option>)}
+                                            </select>
+                                        </td>
+                                        <td className="px-6 py-4" colSpan="2">
                                             <div className="flex gap-2 justify-end">
                                                 <button onClick={() => handleUpdateSale(sale.id)} className="font-medium text-green-600 hover:underline">Сохранить</button>
                                                 <button onClick={() => setEditingSaleId(null)} className="font-medium text-gray-500 hover:underline">Отмена</button>
@@ -214,9 +248,9 @@ function SalesPage() {
                                     </>
                                 ) : (
                                     <>
-                                        <td className="px-6 py-4"><p className="font-medium">{new Date(sale.sale_date).toLocaleDateString()}</p><p className="text-gray-500">{sale.customer_name || '–'}</p></td>
-                                        <td className="px-6 py-4">{sale.weight_kg} кг</td>
-                                        <td className="px-6 py-4">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.price_per_kg)}</td>
+                                        <td className="px-6 py-4"><p>{new Date(sale.sale_date).toLocaleDateString()} <span className="text-gray-400">{new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></p>{sale.batch_name && <span className="text-xs bg-blue-100 text-blue-800 rounded-full px-2 py-1">{sale.batch_name}</span>}</td>
+                                        <td className="px-6 py-4">{sale.customer_name || '–'}</td>
+                                        <td className="px-6 py-4"><p>{sale.weight_kg} кг</p><p className="text-xs text-gray-500">@ {sale.price_per_kg}</p></td>
                                         <td className="px-6 py-4 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.total_amount)}</td>
                                         <td className="px-6 py-4 font-semibold text-green-600">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.total_paid)}</td>
                                         <td className="px-6 py-4">{sale.balance <= 0 ? (<span className="px-3 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full">Выплачено</span>) : (<span className="px-3 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full">Остаток: {new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.balance)}</span>)}</td>
@@ -236,7 +270,7 @@ function SalesPage() {
 
             {isModalOpen && selectedSale && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
+                   <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
                         <div className="p-6 border-b"><h3 className="text-xl font-semibold">Платежи по продаже</h3><p className="text-sm text-gray-500">от {new Date(selectedSale.sale_date).toLocaleDateString()} (Покупатель: {selectedSale.customer_name || 'Не указан'})</p></div>
                         <div className="p-6 grid grid-cols-3 gap-4 text-center border-b">
                             <div><p className="text-sm text-gray-500">Всего к оплате</p><p className="font-bold text-lg">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(selectedSale.total_amount)}</p></div>
