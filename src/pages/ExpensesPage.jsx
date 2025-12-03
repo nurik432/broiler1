@@ -9,8 +9,7 @@ function ExpensesPage() {
     const [loading, setLoading] = useState(true);
     const [activeBatches, setActiveBatches] = useState([]);
 
-    // --- Состояние для управления вкладками ---
-    const [activeTab, setActiveTab] = useState('work'); // 'work' или 'personal'
+    const [activeTab, setActiveTab] = useState('work');
 
     // --- Состояния для формы добавления ---
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -23,6 +22,10 @@ function ExpensesPage() {
     // --- Состояния для редактирования ---
     const [editingId, setEditingId] = useState(null);
     const [editFormData, setEditFormData] = useState({});
+
+    // --- Состояния для массового выделения ---
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [batchIdToAssign, setBatchIdToAssign] = useState('');
 
     // --- Состояния для фильтра и отчета ---
     const [startDate, setStartDate] = useState('');
@@ -53,7 +56,6 @@ function ExpensesPage() {
         fetchData();
     }, []);
 
-    // --- Логика фильтрации и отчетов ---
     const expensesForCurrentTab = useMemo(() => {
         return allExpenses.filter(exp => exp.expense_scope === activeTab);
     }, [allExpenses, activeTab]);
@@ -65,13 +67,11 @@ function ExpensesPage() {
         setReportData({ total });
     };
 
-    const handleResetFilter = () => {
-        setReportData(null);
-    };
+    const handleResetFilter = () => setReportData(null);
 
-    // Переключение вкладок со сбросом отчета
     const switchTab = (tab) => {
         setActiveTab(tab);
+        setSelectedIds(new Set()); // Сбрасываем выделение при смене вкладки
         handleResetFilter();
     };
 
@@ -82,7 +82,7 @@ function ExpensesPage() {
         const { data: { user } } = await supabase.auth.getUser();
         const { error } = await supabase.from('expenses').insert([{
             expense_date: date, description, amount: Number(amount), category,
-            expense_scope: activeTab, user_id: user.id, // Тип берется из активной вкладки
+            expense_scope: activeTab, user_id: user.id,
             batch_id: selectedBatchId || null
         }]);
         if (error) { alert(error.message); }
@@ -99,25 +99,58 @@ function ExpensesPage() {
         if (error) { alert(error.message); } else { setEditingId(null); await fetchData(); }
     };
 
-    // Компонент таблицы для переиспользования
+    // --- Функции массового выделения ---
+    const handleSelect = (expenseId) => {
+        const newSelectedIds = new Set(selectedIds);
+        if (newSelectedIds.has(expenseId)) { newSelectedIds.delete(expenseId); }
+        else { newSelectedIds.add(expenseId); }
+        setSelectedIds(newSelectedIds);
+    };
+
+    const handleSelectAll = (expensesOnPage) => {
+        const allIdsOnPage = new Set(expensesOnPage.map(exp => exp.id));
+        if (selectedIds.size === expensesOnPage.length && expensesOnPage.length > 0) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(allIdsOnPage);
+        }
+    };
+
+    const handleMassAssign = async () => {
+        if (selectedIds.size === 0 || !batchIdToAssign) { alert("Выберите расходы и партию."); return; }
+        const idsToUpdate = Array.from(selectedIds);
+        const { error } = await supabase.from('expenses').update({ batch_id: batchIdToAssign }).in('id', idsToUpdate);
+        if (error) { alert("Ошибка: " + error.message); }
+        else {
+            alert(`Успешно привязано ${idsToUpdate.length} записей.`);
+            setSelectedIds(new Set());
+            setBatchIdToAssign('');
+            await fetchData();
+        }
+    };
+
+    // Компонент таблицы
     const ExpensesTable = ({ expensesList }) => (
         <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
-                <thead className="bg-gray-50 text-xs uppercase"><tr><th className="px-6 py-3">Дата/Время</th><th className="px-6 py-3">Описание/Категория</th><th className="px-6 py-3">Партия</th><th className="px-6 py-3">Сумма</th><th className="px-6 py-3 text-right">Действия</th></tr></thead>
+                <thead className="bg-gray-50 text-xs uppercase"><tr>
+                    <th className="p-4"><input type="checkbox" checked={selectedIds.size === expensesList.length && expensesList.length > 0} onChange={() => handleSelectAll(expensesList)} /></th>
+                    <th className="px-6 py-3">Дата/Время</th><th className="px-6 py-3">Описание/Категория</th><th className="px-6 py-3">Партия</th><th className="px-6 py-3">Сумма</th><th className="px-6 py-3 text-right">Действия</th>
+                </tr></thead>
                 <tbody>
-                    {loading ? (<tr><td colSpan="5">Загрузка...</td></tr>) :
+                    {loading ? (<tr><td colSpan="6">Загрузка...</td></tr>) :
                     expensesList.map(exp => (
-                        <tr key={exp.id} className="border-b">
+                        <tr key={exp.id} className={`border-b ${selectedIds.has(exp.id) ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}>
                             {editingId === exp.id ? (
                                 <>
-                                    <td className="p-2"><input type="date" value={editFormData.expense_date} onChange={e => setEditFormData({...editFormData, expense_date: e.target.value})} className="p-1 border rounded w-full"/></td>
-                                    <td className="p-2"><input type="text" value={editFormData.description} onChange={e => setEditFormData({...editFormData, description: e.target.value})} className="p-1 border rounded w-full mb-1"/><input type="text" value={editFormData.category} onChange={e => setEditFormData({...editFormData, category: e.target.value})} className="p-1 border rounded w-full"/></td>
+                                    <td className="p-2" colSpan="2"><input type="date" value={editFormData.expense_date} onChange={e => setEditFormData({...editFormData, expense_date: e.target.value})} className="p-1 border rounded w-full"/><input type="text" value={editFormData.description} onChange={e => setEditFormData({...editFormData, description: e.target.value})} className="p-1 border rounded w-full mt-1"/></td>
                                     <td className="p-2"><select value={editFormData.batch_id} onChange={e => setEditFormData({...editFormData, batch_id: e.target.value})} className="p-1 border rounded w-full bg-white"><option value="">-- Не привязывать --</option>{activeBatches.map(b => <option key={b.id} value={b.id}>{b.batch_name}</option>)}</select></td>
                                     <td className="p-2"><input type="number" value={editFormData.amount} onChange={e => setEditFormData({...editFormData, amount: e.target.value})} className="p-1 border rounded w-24"/></td>
-                                    <td className="px-6 py-4 text-right flex gap-2 justify-end"><button onClick={() => handleUpdate(exp.id)} className="font-medium text-green-600">Сохранить</button><button onClick={() => setEditingId(null)} className="font-medium text-gray-500">Отмена</button></td>
+                                    <td className="px-6 py-4 text-right flex gap-2 justify-end" colSpan="2"><button onClick={() => handleUpdate(exp.id)} className="font-medium text-green-600">Сохранить</button><button onClick={() => setEditingId(null)} className="font-medium text-gray-500">Отмена</button></td>
                                 </>
                             ) : (
                                 <>
+                                    <td className="p-4"><input type="checkbox" checked={selectedIds.has(exp.id)} onChange={() => handleSelect(exp.id)} /></td>
                                     <td className="px-6 py-4"><p>{new Date(exp.expense_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(exp.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p></td>
                                     <td className="px-6 py-4"><p>{exp.description}</p><p className="text-xs text-gray-500">{exp.category}</p></td>
                                     <td className="px-6 py-4">{exp.batch_name ? <span className="px-2 py-1 text-xs bg-blue-100 rounded-full">{exp.batch_name}</span> : '–'}</td>
@@ -127,7 +160,7 @@ function ExpensesPage() {
                             )}
                         </tr>
                     ))}
-                    {!loading && expensesList.length === 0 && (<tr><td colSpan="5" className="text-center py-4">Записей не найдено.</td></tr>)}
+                    {!loading && expensesList.length === 0 && (<tr><td colSpan="6" className="text-center py-4">Записей не найдено.</td></tr>)}
                 </tbody>
             </table>
         </div>
@@ -173,10 +206,23 @@ function ExpensesPage() {
                     <button onClick={() => switchTab('work')} className={`py-2 px-4 font-semibold ${activeTab === 'work' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>Рабочие расходы</button>
                     <button onClick={() => switchTab('personal')} className={`py-2 px-4 font-semibold ${activeTab === 'personal' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>Домашние расходы</button>
                 </div>
-                {/* Условный рендеринг таблицы в зависимости от вкладки */}
-                {activeTab === 'work' && <ExpensesTable expensesList={expensesForCurrentTab} />}
-                {activeTab === 'personal' && <ExpensesTable expensesList={expensesForCurrentTab} />}
+                {<ExpensesTable expensesList={expensesForCurrentTab} />}
             </div>
+
+            {selectedIds.size > 0 && (
+                <div className="fixed bottom-0 left-0 right-0 bg-white shadow-lg p-4 border-t z-40 lg:pl-72 transition-all duration-300">
+                    <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+                        <span className="font-semibold text-gray-700">Выбрано: {selectedIds.size}</span>
+                        <div className="flex items-center gap-2">
+                            <select value={batchIdToAssign} onChange={e => setBatchIdToAssign(e.target.value)} className="p-2 border rounded-md bg-white">
+                                <option value="">-- Выберите партию --</option>
+                                {activeBatches.map(b => (<option key={b.id} value={b.id}>{b.batch_name}</option>))}
+                            </select>
+                            <button onClick={handleMassAssign} className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Привязать</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
