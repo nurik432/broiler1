@@ -7,6 +7,8 @@ function ExpensesPage() {
     const [expenses, setExpenses] = useState([]);
     const [loading, setLoading] = useState(true);
     const [activeBatches, setActiveBatches] = useState([]);
+
+    // Состояния для формы
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
     const [description, setDescription] = useState('');
     const [amount, setAmount] = useState('');
@@ -15,33 +17,34 @@ function ExpensesPage() {
     const [selectedBatchId, setSelectedBatchId] = useState('');
     const [expenseScope, setExpenseScope] = useState('work');
 
+    // Функция для загрузки данных через RPC
     const fetchData = async () => {
         setLoading(true);
-
-        // --- ИЗМЕНЕНИЕ ЗДЕСЬ: Правильная сортировка ---
-        const { data, error } = await supabase
-            .from('expenses')
-            .select('*, batch:broiler_batches(batch_name)')
-            .order('expense_date', { ascending: false })
-            .order('created_at', { ascending: false });
+        // --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: ВЫЗЫВАЕМ RPC-ФУНКЦИЮ ---
+        const { data, error } = await supabase.rpc('get_expenses');
 
         if (error) {
-            console.error('Ошибка загрузки расходов:', error);
-            alert('Не удалось загрузить данные о расходах. Проверьте консоль.');
+            console.error('Ошибка при вызове RPC get_expenses:', error);
+            alert('Не удалось загрузить данные о расходах.');
         } else {
+            // Данные из RPC уже отсортированы, просто сохраняем их
             setExpenses(data);
         }
         setLoading(false);
     };
 
+    // Функция для загрузки активных партий (остается без изменений)
     const fetchActiveBatches = async () => {
         const { data, error } = await supabase
             .from('broiler_batches')
             .select('id, batch_name')
             .eq('is_active', true)
             .order('start_date', { ascending: false });
-        if (error) { console.error("Ошибка загрузки партий:", error); }
-        else { setActiveBatches(data); }
+        if (error) {
+            console.error("Ошибка загрузки активных партий:", error);
+        } else {
+            setActiveBatches(data);
+        }
     };
 
     useEffect(() => {
@@ -49,23 +52,28 @@ function ExpensesPage() {
         fetchActiveBatches();
     }, []);
 
+    // Функция добавления нового расхода (остается без изменений)
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
         const { data: { user } } = await supabase.auth.getUser();
+
         const { error } = await supabase.from('expenses').insert([{
             expense_date: date, description, amount: Number(amount), category,
             expense_scope: expenseScope, user_id: user.id,
             batch_id: selectedBatchId || null
         }]);
-        if (error) { alert(error.message); }
-        else {
+
+        if (error) {
+            alert(error.message);
+        } else {
             setDescription(''); setAmount(''); setCategory(''); setSelectedBatchId('');
-            await fetchData();
+            await fetchData(); // Перезагружаем данные после добавления
         }
         setIsSubmitting(false);
     };
 
+    // Функция удаления расхода (остается без изменений)
     const handleDelete = async (id) => {
         if (window.confirm("Удалить эту запись о расходе?")) {
             const { error } = await supabase.from('expenses').delete().eq('id', id);
@@ -77,6 +85,7 @@ function ExpensesPage() {
     return (
         <div>
             <h1 className="text-3xl font-bold text-gray-800 mb-6">Учет расходов</h1>
+
             <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                 <h2 className="text-2xl font-semibold mb-4">Добавить расход</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
@@ -101,6 +110,7 @@ function ExpensesPage() {
                     </div>
                 </form>
             </div>
+
             <div className="bg-white rounded-lg shadow-md overflow-x-auto">
                 <table className="w-full text-sm text-left">
                     <thead className="bg-gray-50 text-xs uppercase"><tr><th className="px-6 py-3">Дата / Время</th><th className="px-6 py-3">Описание / Категория</th><th className="px-6 py-3">Партия</th><th className="px-6 py-3">Тип</th><th className="px-6 py-3">Сумма</th><th className="px-6 py-3 text-right">Действия</th></tr></thead>
@@ -110,7 +120,8 @@ function ExpensesPage() {
                             <tr key={exp.id} className="border-b hover:bg-gray-50">
                                 <td className="px-6 py-4"><p className="font-medium">{new Date(exp.expense_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(exp.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p></td>
                                 <td className="px-6 py-4"><p className="font-medium text-gray-900">{exp.description}</p><p className="text-xs text-gray-500">{exp.category}</p></td>
-                                <td className="px-6 py-4">{exp.batch ? <span className="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full">{exp.batch.batch_name}</span> : '–'}</td>
+                                {/* --- ИЗМЕНЕНИЕ: Используем `exp.batch_name` --- */}
+                                <td className="px-6 py-4">{exp.batch_name ? <span className="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full">{exp.batch_name}</span> : '–'}</td>
                                 <td className="px-6 py-4">{exp.expense_scope === 'work' ? 'Рабочий' : 'Домашний'}</td>
                                 <td className="px-6 py-4 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(exp.amount)}</td>
                                 <td className="px-6 py-4 text-right"><button onClick={() => handleDelete(exp.id)} className="font-medium text-red-600 hover:underline">Удалить</button></td>
