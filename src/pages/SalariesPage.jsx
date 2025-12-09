@@ -8,7 +8,7 @@ function SalariesPage() {
     const [allSalaries, setAllSalaries] = useState([]);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [loadingSalaries, setLoadingSalaries] = useState(false); // Отдельный лоадер для зарплат
+    const [loadingSalaries, setLoadingSalaries] = useState(false);
     const [activeBatches, setActiveBatches] = useState([]);
     const [showArchived, setShowArchived] = useState(false);
     const [newName, setNewName] = useState('');
@@ -48,7 +48,7 @@ function SalariesPage() {
                     console.error('Ошибка загрузки выплат:', error);
                     setAllSalaries([]);
                 } else {
-                    setAllSalaries(data || []); // Убедимся, что это массив, даже если вернется null
+                    setAllSalaries(data || []);
                 }
                 setLoadingSalaries(false);
             };
@@ -90,8 +90,9 @@ function SalariesPage() {
         } else {
             setPaymentAmount('');
             setSelectedBatchId('');
-            // Перезагружаем данные
-            const { data } = await supabase.rpc('get_salaries_by_employee', { employee_uuid: selectedEmployee.id });
+            const { data } = await supabase.rpc('get_salaries_by_employee', {
+                employee_uuid: selectedEmployee.id
+            });
             setAllSalaries(data || []);
         }
         setIsAddingPayment(false);
