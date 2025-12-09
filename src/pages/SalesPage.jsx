@@ -1,14 +1,16 @@
 // src/pages/SalesPage.jsx
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 
 function SalesPage() {
     // --- ОСНОВНЫЕ СОСТОЯНИЯ ---
     const [allSales, setAllSales] = useState([]);
-    const [filteredSales, setFilteredSales] = useState([]);
     const [loading, setLoading] = useState(true);
     const [activeBatches, setActiveBatches] = useState([]);
+
+    // --- Состояние для фильтра архивных ---
+    const [showArchived, setShowArchived] = useState(false);
 
     // --- Состояния для формы ДОБАВЛЕНИЯ ---
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -48,10 +50,7 @@ function SalesPage() {
         ]);
 
         if (salesResponse.error) { console.error('Ошибка загрузки продаж:', salesResponse.error); }
-        else {
-            setAllSales(salesResponse.data);
-            setFilteredSales(salesResponse.data);
-        }
+        else { setAllSales(salesResponse.data); }
 
         if (batchesResponse.error) { console.error("Ошибка загрузки партий:", batchesResponse.error); }
         else { setActiveBatches(batchesResponse.data); }
@@ -68,11 +67,17 @@ function SalesPage() {
         fetchAllData();
     }, []);
 
+    const filteredSales = useMemo(() => {
+        return allSales.filter(sale => {
+            if (showArchived) return true;
+            return !sale.batch_id || sale.batch_is_active === true;
+        });
+    }, [allSales, showArchived]);
+
     const handleGenerateReport = () => {
         if (!startDate || !endDate) { alert("Выберите даты."); return; }
-        const filtered = allSales.filter(sale => sale.sale_date >= startDate && sale.sale_date <= endDate);
-        setFilteredSales(filtered);
-        const totals = filtered.reduce((acc, sale) => {
+        const reportFiltered = filteredSales.filter(sale => sale.sale_date >= startDate && sale.sale_date <= endDate);
+        const totals = reportFiltered.reduce((acc, sale) => {
             acc.totalSales += sale.total_amount;
             acc.totalPayments += sale.total_paid;
             acc.totalBalance += sale.balance;
@@ -81,10 +86,7 @@ function SalesPage() {
         setReportData(totals);
     };
 
-    const handleResetFilter = () => {
-        setFilteredSales(allSales);
-        setReportData(null);
-    };
+    const handleResetFilter = () => setReportData(null);
 
     const handleSubmitSale = async (e) => {
         e.preventDefault();
@@ -140,12 +142,10 @@ function SalesPage() {
     };
 
     const handleEditPaymentClick = (payment) => { setEditingPaymentId(payment.id); setEditPaymentFormData({ payment_date: payment.payment_date, amount: payment.amount }); };
-
     const handleUpdatePayment = async (paymentId) => {
         const { error } = await supabase.from('payments').update({ ...editPaymentFormData, amount: Number(editPaymentFormData.amount) }).eq('id', paymentId);
-        if (error) {
-            alert(error.message);
-        } else {
+        if (error) { alert(error.message); }
+        else {
             setEditingPaymentId(null);
             await fetchAllData();
             handleResetFilter();
@@ -156,13 +156,11 @@ function SalesPage() {
             setSelectedSale(updatedSaleData);
         }
     };
-
     const handleDeletePayment = async (paymentId) => {
         if (window.confirm("Удалить этот платеж?")) {
             const { error } = await supabase.from('payments').delete().eq('id', paymentId);
-            if (error) {
-                alert(error.message);
-            } else {
+            if (error) { alert(error.message); }
+            else {
                 await fetchAllData();
                 handleResetFilter();
                 const { data: updatedPayments } = await supabase.from('payments').select('*').eq('sale_id', selectedSale.id).order('payment_date', { ascending: false });
@@ -176,7 +174,13 @@ function SalesPage() {
 
     return (
         <div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-6">Учет продаж и поступлений</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold text-gray-800">Учет продаж и поступлений</h1>
+                <label className="flex items-center text-sm text-gray-600 cursor-pointer">
+                    <input type="checkbox" checked={showArchived} onChange={() => setShowArchived(!showArchived)} className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/>
+                    <span className="ml-2">Показать продажи архивных партий</span>
+                </label>
+            </div>
 
             <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                 <h2 className="text-2xl font-semibold mb-4">Отчет по продажам</h2>
@@ -248,7 +252,7 @@ function SalesPage() {
                                     </>
                                 ) : (
                                     <>
-                                        <td className="px-6 py-4"><p>{new Date(sale.sale_date).toLocaleDateString()} <span className="text-gray-400">{new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></p>{sale.batch_name && <span className="text-xs bg-blue-100 text-blue-800 rounded-full px-2 py-1">{sale.batch_name}</span>}</td>
+                                        <td className="px-6 py-4"><p>{new Date(sale.sale_date).toLocaleDateString()} <span className="text-gray-400">{new Date(sale.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></p>{sale.batch_name && <span className={`text-xs rounded-full px-2 py-1 ${sale.batch_is_active ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-600'}`}>{sale.batch_name}</span>}</td>
                                         <td className="px-6 py-4">{sale.customer_name || '–'}</td>
                                         <td className="px-6 py-4"><p>{sale.weight_kg} кг</p><p className="text-xs text-gray-500">@ {sale.price_per_kg}</p></td>
                                         <td className="px-6 py-4 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sale.total_amount)}</td>

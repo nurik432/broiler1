@@ -1,12 +1,15 @@
 // src/pages/FeedPage.jsx
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 
 function FeedPage() {
-    const [deliveries, setDeliveries] = useState([]);
+    const [allDeliveries, setAllDeliveries] = useState([]);
     const [loading, setLoading] = useState(true);
     const [activeBatches, setActiveBatches] = useState([]);
+
+    // Состояние для фильтра архивных
+    const [showArchived, setShowArchived] = useState(false);
 
     const [feedTotals, setFeedTotals] = useState({ start: 0, growth: 0, finish: 0 });
     const [totalFeed, setTotalFeed] = useState(0);
@@ -20,115 +23,91 @@ function FeedPage() {
     const [editingId, setEditingId] = useState(null);
     const [editFormData, setEditFormData] = useState({});
 
-    // 1. Загрузка данных (поставок и партий)
+    // 1. Загрузка данных
     const fetchData = async () => {
         setLoading(true);
-        const { data, error } = await supabase
-            .from('feed_deliveries')
-            .select('*, batch:broiler_batches(batch_name)') // Получаем имя привязанной партии
-            .order('delivery_date', { ascending: false })
-            .order('created_at', { ascending: false });
+        const [deliveriesRes, batchesRes] = await Promise.all([
+            supabase.rpc('get_feed_deliveries'),
+            supabase.from('broiler_batches').select('id, batch_name').eq('is_active', true)
+        ]);
 
-        if (error) {
-            console.error('Ошибка загрузки поставок корма:', error);
+        if (deliveriesRes.error) {
+            console.error('Ошибка:', deliveriesRes.error);
             alert('Не удалось загрузить данные о корме.');
         } else {
-            setDeliveries(data);
+            setAllDeliveries(deliveriesRes.data);
+        }
 
-            const totals = data.reduce((acc, delivery) => {
-                if (delivery.feed_type === 'старт') acc.start += delivery.quantity_kg;
-                else if (delivery.feed_type === 'рост') acc.growth += delivery.quantity_kg;
-                else if (delivery.feed_type === 'финиш') acc.finish += delivery.quantity_kg;
-                return acc;
-            }, { start: 0, growth: 0, finish: 0 });
-            setFeedTotals(totals);
-            setTotalFeed(totals.start + totals.growth + totals.finish);
+        if (batchesRes.error) {
+            console.error("Ошибка:", batchesRes.error);
+        } else {
+            setActiveBatches(batchesRes.data);
         }
         setLoading(false);
     };
 
-    const fetchActiveBatches = async () => {
-        const { data, error } = await supabase
-            .from('broiler_batches')
-            .select('id, batch_name')
-            .eq('is_active', true)
-            .order('start_date', { ascending: false });
-        if (error) {
-            console.error("Ошибка загрузки активных партий:", error);
-        } else {
-            setActiveBatches(data);
-        }
-    };
-
     useEffect(() => {
         fetchData();
-        fetchActiveBatches();
     }, []);
 
-    // 2. Добавление новой поставки
+    // 2. Логика фильтрации и расчетов
+    const filteredDeliveries = useMemo(() => {
+        return allDeliveries.filter(delivery => {
+            if (showArchived) return true;
+            return !delivery.batch_id || delivery.batch_is_active === true;
+        });
+    }, [allDeliveries, showArchived]);
+
+    useEffect(() => {
+        // Пересчитываем сводку на основе отфильтрованных данных
+        const totals = filteredDeliveries.reduce((acc, delivery) => {
+            if (delivery.feed_type === 'старт') acc.start += delivery.quantity_kg;
+            else if (delivery.feed_type === 'рост') acc.growth += delivery.quantity_kg;
+            else if (delivery.feed_type === 'финиш') acc.finish += delivery.quantity_kg;
+            return acc;
+        }, { start: 0, growth: 0, finish: 0 });
+        setFeedTotals(totals);
+        setTotalFeed(totals.start + totals.growth + totals.finish);
+    }, [filteredDeliveries]);
+
+
+    // 3. CRUD функции
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
         const { data: { user } } = await supabase.auth.getUser();
         const { error } = await supabase.from('feed_deliveries').insert([{
-            delivery_date: date,
-            feed_type: feedType,
-            quantity_kg: Number(quantity),
-            user_id: user.id,
-            batch_id: selectedBatchId || null // Добавляем привязку к партии
+            delivery_date: date, feed_type: feedType, quantity_kg: Number(quantity),
+            user_id: user.id, batch_id: selectedBatchId || null
         }]);
-        if (error) {
-            alert(error.message);
-        } else {
-            setQuantity('');
-            setSelectedBatchId('');
+        if (error) { alert(error.message); }
+        else {
+            setQuantity(''); setSelectedBatchId('');
             await fetchData();
         }
         setIsSubmitting(false);
     };
 
-    // 3. Функции для редактирования и удаления
-    const handleEditClick = (delivery) => {
-        setEditingId(delivery.id);
-        setEditFormData({
-            delivery_date: delivery.delivery_date,
-            feed_type: delivery.feed_type,
-            quantity_kg: delivery.quantity_kg,
-            batch_id: delivery.batch_id || '' // Устанавливаем batch_id для редактирования
-        });
-    };
-
+    const handleEditClick = (delivery) => { setEditingId(delivery.id); setEditFormData({ delivery_date: delivery.delivery_date, feed_type: delivery.feed_type, quantity_kg: delivery.quantity_kg, batch_id: delivery.batch_id || '' }); };
     const handleUpdate = async (deliveryId) => {
-        const { error } = await supabase.from('feed_deliveries').update({
-            ...editFormData,
-            quantity_kg: Number(editFormData.quantity_kg),
-            batch_id: editFormData.batch_id || null
-        }).eq('id', deliveryId);
-        if (error) {
-            alert(error.message);
-        } else {
-            setEditingId(null);
-            await fetchData();
-        }
+        const { error } = await supabase.from('feed_deliveries').update({ ...editFormData, quantity_kg: Number(editFormData.quantity_kg), batch_id: editFormData.batch_id || null }).eq('id', deliveryId);
+        if (error) { alert(error.message); }
+        else { setEditingId(null); await fetchData(); }
     };
-
-    const handleDelete = async (deliveryId) => {
-        if (window.confirm("Удалить эту запись о поставке?")) {
-            const { error } = await supabase.from('feed_deliveries').delete().eq('id', deliveryId);
-            if (error) {
-                alert(error.message);
-            } else {
-                await fetchData();
-            }
-        }
-    };
+    const handleDelete = async (deliveryId) => { if (window.confirm("Удалить запись?")) { await supabase.from('feed_deliveries').delete().eq('id', deliveryId); await fetchData(); } };
 
     return (
         <div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-6">Учет корма</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold text-gray-800">Учет корма</h1>
+                <label className="flex items-center text-sm text-gray-600 cursor-pointer">
+                    <input type="checkbox" checked={showArchived} onChange={() => setShowArchived(!showArchived)} className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/>
+                    <span className="ml-2">Показать поставки для архивных партий</span>
+                </label>
+            </div>
 
             <div className="bg-white p-6 rounded-lg shadow-md mb-8">
-                <h2 className="text-2xl font-semibold mb-4">Сводка по корму (всего)</h2>
+                <h2 className="text-2xl font-semibold mb-4">Сводка по корму (с учетом фильтра)</h2>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                     <div><p className="text-sm text-gray-500">Старт</p><p className="font-bold text-xl md:text-2xl text-blue-600">{feedTotals.start} кг</p></div>
                     <div><p className="text-sm text-gray-500">Рост</p><p className="font-bold text-xl md:text-2xl text-green-600">{feedTotals.growth} кг</p></div>
@@ -157,28 +136,21 @@ function FeedPage() {
                 <table className="w-full text-sm text-left">
                     <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
                         <tr>
-                            <th className="px-6 py-3">Дата / Время</th>
-                            <th className="px-6 py-3">Тип корма</th>
-                            <th className="px-6 py-3">Количество (кг)</th>
-                            <th className="px-6 py-3">Партия</th>
+                            <th className="px-6 py-3">Дата / Время</th><th className="px-6 py-3">Тип корма</th>
+                            <th className="px-6 py-3">Количество (кг)</th><th className="px-6 py-3">Партия</th>
                             <th className="px-6 py-3 text-right">Действия</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading ? ( <tr><td colSpan="5" className="text-center py-4">Загрузка...</td></tr> ) :
-                        deliveries.map(d => (
+                        filteredDeliveries.map(d => (
                             <tr key={d.id} className="border-b hover:bg-gray-50">
                                 {editingId === d.id ? (
                                     <>
                                         <td className="p-2"><input type="date" value={editFormData.delivery_date} onChange={e => setEditFormData({...editFormData, delivery_date: e.target.value})} className="p-1 border rounded w-full"/></td>
                                         <td className="p-2"><select value={editFormData.feed_type} onChange={e => setEditFormData({...editFormData, feed_type: e.target.value})} className="p-1 border rounded w-full bg-white"><option value="старт">Старт</option><option value="рост">Рост</option><option value="финиш">Финиш</option></select></td>
                                         <td className="p-2"><input type="number" step="0.1" value={editFormData.quantity_kg} onChange={e => setEditFormData({...editFormData, quantity_kg: e.target.value})} className="p-1 border rounded w-32"/></td>
-                                        <td className="p-2">
-                                            <select value={editFormData.batch_id} onChange={e => setEditFormData({...editFormData, batch_id: e.target.value})} className="p-1 border rounded w-full bg-white">
-                                                <option value="">-- Не привязывать --</option>
-                                                {activeBatches.map(b => <option key={b.id} value={b.id}>{b.batch_name}</option>)}
-                                            </select>
-                                        </td>
+                                        <td className="p-2"><select value={editFormData.batch_id} onChange={e => setEditFormData({...editFormData, batch_id: e.target.value})} className="p-1 border rounded w-full bg-white"><option value="">-- Не привязывать --</option>{activeBatches.map(b => <option key={b.id} value={b.id}>{b.batch_name}</option>)}</select></td>
                                         <td className="px-6 py-4 text-right flex gap-2 justify-end"><button onClick={() => handleUpdate(d.id)} className="font-medium text-green-600">Сохранить</button><button onClick={() => setEditingId(null)} className="font-medium text-gray-500">Отмена</button></td>
                                     </>
                                 ) : (
@@ -186,13 +158,13 @@ function FeedPage() {
                                         <td className="px-6 py-4"><p className="font-medium">{new Date(d.delivery_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(d.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</p></td>
                                         <td className="px-6 py-4 font-medium text-gray-900">{d.feed_type.charAt(0).toUpperCase() + d.feed_type.slice(1)}</td>
                                         <td className="px-6 py-4 font-semibold">{d.quantity_kg} кг</td>
-                                        <td className="px-6 py-4">{d.batch ? <span className="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full">{d.batch.batch_name}</span> : '–'}</td>
+                                        <td className="px-6 py-4">{d.batch_name ? <span className={`text-xs rounded-full px-2 py-1 ${d.batch_is_active ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-600'}`}>{d.batch_name}</span> : '–'}</td>
                                         <td className="px-6 py-4 text-right flex gap-4 justify-end"><button onClick={() => handleEditClick(d)} className="font-medium text-blue-600 hover:underline">Редактировать</button><button onClick={() => handleDelete(d.id)} className="font-medium text-red-600 hover:underline">Удалить</button></td>
                                     </>
                                 )}
                             </tr>
                         ))}
-                         { !loading && deliveries.length === 0 && (<tr><td colSpan="5" className="text-center py-4 text-gray-500">Записей о приходе корма пока нет.</td></tr>) }
+                         { !loading && filteredDeliveries.length === 0 && (<tr><td colSpan="5" className="text-center py-4 text-gray-500">Записей о приходе корма не найдено.</td></tr>) }
                     </tbody>
                 </table>
             </div>

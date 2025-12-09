@@ -9,7 +9,11 @@ function ExpensesPage() {
     const [loading, setLoading] = useState(true);
     const [activeBatches, setActiveBatches] = useState([]);
 
+    // --- Состояние для управления вкладками ---
     const [activeTab, setActiveTab] = useState('work');
+
+    // --- Состояние для фильтра архивных ---
+    const [showArchived, setShowArchived] = useState(false);
 
     // --- Состояния для формы добавления ---
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -60,10 +64,17 @@ function ExpensesPage() {
         return allExpenses.filter(exp => exp.expense_scope === activeTab);
     }, [allExpenses, activeTab]);
 
+    const finalFilteredExpenses = useMemo(() => {
+        return expensesForCurrentTab.filter(exp => {
+            if (showArchived) return true;
+            return !exp.batch_id || exp.batch_is_active === true;
+        });
+    }, [expensesForCurrentTab, showArchived]);
+
     const handleGenerateReport = () => {
         if (!startDate || !endDate) { alert("Выберите даты."); return; }
-        const filtered = expensesForCurrentTab.filter(exp => exp.expense_date >= startDate && exp.expense_date <= endDate);
-        const total = filtered.reduce((sum, exp) => sum + exp.amount, 0);
+        const filteredForReport = finalFilteredExpenses.filter(exp => exp.expense_date >= startDate && exp.expense_date <= endDate);
+        const total = filteredForReport.reduce((sum, exp) => sum + exp.amount, 0);
         setReportData({ total });
     };
 
@@ -71,11 +82,10 @@ function ExpensesPage() {
 
     const switchTab = (tab) => {
         setActiveTab(tab);
-        setSelectedIds(new Set()); // Сбрасываем выделение при смене вкладки
+        setSelectedIds(new Set());
         handleResetFilter();
     };
 
-    // --- CRUD Функции ---
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
@@ -92,6 +102,7 @@ function ExpensesPage() {
         }
         setIsSubmitting(false);
     };
+
     const handleDelete = async (id) => { if (window.confirm("Удалить?")) { await supabase.from('expenses').delete().eq('id', id); fetchData(); }};
     const handleEditClick = (expense) => { setEditingId(expense.id); setEditFormData({ expense_date: expense.expense_date, description: expense.description, amount: expense.amount, category: expense.category || '', expense_scope: expense.expense_scope, batch_id: expense.batch_id || '' }); };
     const handleUpdate = async (expenseId) => {
@@ -99,7 +110,6 @@ function ExpensesPage() {
         if (error) { alert(error.message); } else { setEditingId(null); await fetchData(); }
     };
 
-    // --- Функции массового выделения ---
     const handleSelect = (expenseId) => {
         const newSelectedIds = new Set(selectedIds);
         if (newSelectedIds.has(expenseId)) { newSelectedIds.delete(expenseId); }
@@ -129,7 +139,6 @@ function ExpensesPage() {
         }
     };
 
-    // Компонент таблицы
     const ExpensesTable = ({ expensesList }) => (
         <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
@@ -138,12 +147,13 @@ function ExpensesPage() {
                     <th className="px-6 py-3">Дата/Время</th><th className="px-6 py-3">Описание/Категория</th><th className="px-6 py-3">Партия</th><th className="px-6 py-3">Сумма</th><th className="px-6 py-3 text-right">Действия</th>
                 </tr></thead>
                 <tbody>
-                    {loading ? (<tr><td colSpan="6">Загрузка...</td></tr>) :
+                    {loading ? (<tr><td colSpan="6" className="text-center py-4">Загрузка...</td></tr>) :
                     expensesList.map(exp => (
                         <tr key={exp.id} className={`border-b ${selectedIds.has(exp.id) ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}>
                             {editingId === exp.id ? (
                                 <>
-                                    <td className="p-2" colSpan="2"><input type="date" value={editFormData.expense_date} onChange={e => setEditFormData({...editFormData, expense_date: e.target.value})} className="p-1 border rounded w-full"/><input type="text" value={editFormData.description} onChange={e => setEditFormData({...editFormData, description: e.target.value})} className="p-1 border rounded w-full mt-1"/></td>
+                                    <td className="p-4"></td>
+                                    <td className="p-2"><input type="date" value={editFormData.expense_date} onChange={e => setEditFormData({...editFormData, expense_date: e.target.value})} className="p-1 border rounded w-full"/><input type="text" value={editFormData.description} onChange={e => setEditFormData({...editFormData, description: e.target.value})} className="p-1 border rounded w-full mt-1"/></td>
                                     <td className="p-2"><select value={editFormData.batch_id} onChange={e => setEditFormData({...editFormData, batch_id: e.target.value})} className="p-1 border rounded w-full bg-white"><option value="">-- Не привязывать --</option>{activeBatches.map(b => <option key={b.id} value={b.id}>{b.batch_name}</option>)}</select></td>
                                     <td className="p-2"><input type="number" value={editFormData.amount} onChange={e => setEditFormData({...editFormData, amount: e.target.value})} className="p-1 border rounded w-24"/></td>
                                     <td className="px-6 py-4 text-right flex gap-2 justify-end" colSpan="2"><button onClick={() => handleUpdate(exp.id)} className="font-medium text-green-600">Сохранить</button><button onClick={() => setEditingId(null)} className="font-medium text-gray-500">Отмена</button></td>
@@ -153,7 +163,7 @@ function ExpensesPage() {
                                     <td className="p-4"><input type="checkbox" checked={selectedIds.has(exp.id)} onChange={() => handleSelect(exp.id)} /></td>
                                     <td className="px-6 py-4"><p>{new Date(exp.expense_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(exp.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p></td>
                                     <td className="px-6 py-4"><p>{exp.description}</p><p className="text-xs text-gray-500">{exp.category}</p></td>
-                                    <td className="px-6 py-4">{exp.batch_name ? <span className="px-2 py-1 text-xs bg-blue-100 rounded-full">{exp.batch_name}</span> : '–'}</td>
+                                    <td className="px-6 py-4">{exp.batch_name ? <span className={`px-2 py-1 text-xs rounded-full ${exp.batch_is_active ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-600'}`}>{exp.batch_name}</span> : '–'}</td>
                                     <td className="px-6 py-4 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(exp.amount)}</td>
                                     <td className="px-6 py-4 text-right flex gap-4 justify-end"><button onClick={() => handleEditClick(exp)} className="font-medium text-blue-600">Редактировать</button><button onClick={() => handleDelete(exp.id)} className="font-medium text-red-600">Удалить</button></td>
                                 </>
@@ -168,7 +178,13 @@ function ExpensesPage() {
 
     return (
         <div>
-            <h1 className="text-3xl font-bold text-gray-800 mb-6">Учет расходов</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold text-gray-800">Учет расходов</h1>
+                <label className="flex items-center text-sm text-gray-600 cursor-pointer">
+                    <input type="checkbox" checked={showArchived} onChange={() => setShowArchived(!showArchived)} className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/>
+                    <span className="ml-2">Показать расходы архивных партий</span>
+                </label>
+            </div>
 
             <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                 <h2 className="text-2xl font-semibold mb-4">Отчет по расходам ({activeTab === 'work' ? 'Рабочим' : 'Домашним'})</h2>
@@ -206,7 +222,7 @@ function ExpensesPage() {
                     <button onClick={() => switchTab('work')} className={`py-2 px-4 font-semibold ${activeTab === 'work' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>Рабочие расходы</button>
                     <button onClick={() => switchTab('personal')} className={`py-2 px-4 font-semibold ${activeTab === 'personal' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>Домашние расходы</button>
                 </div>
-                {<ExpensesTable expensesList={expensesForCurrentTab} />}
+                <ExpensesTable expensesList={finalFilteredExpenses} />
             </div>
 
             {selectedIds.size > 0 && (
