@@ -1,14 +1,18 @@
 // src/pages/SalariesPage.jsx
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 
 function SalariesPage() {
     const [employees, setEmployees] = useState([]);
-    const [salaries, setSalaries] = useState([]);
+    const [allSalaries, setAllSalaries] = useState([]);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [loading, setLoading] = useState(true);
     const [activeBatches, setActiveBatches] = useState([]);
+
+    // Состояние для фильтра архивных
+    const [showArchived, setShowArchived] = useState(false);
+
     const [newName, setNewName] = useState('');
     const [newPosition, setNewPosition] = useState('');
     const [isAddingEmployee, setIsAddingEmployee] = useState(false);
@@ -38,16 +42,28 @@ function SalariesPage() {
     useEffect(() => {
         if (selectedEmployee) {
             const fetchSalaries = async () => {
-                const { data, error } = await supabase.from('salaries')
-                    .select('*, batch:broiler_batches(batch_name)')
-                    .eq('employee_id', selectedEmployee.id)
-                    .order('payment_date', { ascending: false })
-                    .order('created_at', { ascending: false });
-                if (error) console.error('Ошибка загрузки выплат:', error); else setSalaries(data);
+                const { data, error } = await supabase.rpc('get_salaries_by_employee', {
+                    employee_uuid: selectedEmployee.id
+                });
+                if (error) {
+                    console.error('Ошибка загрузки выплат:', error);
+                    setAllSalaries([]);
+                } else {
+                    setAllSalaries(data);
+                }
             };
             fetchSalaries();
-        } else { setSalaries([]); }
+        } else {
+            setAllSalaries([]);
+        }
     }, [selectedEmployee]);
+
+    const filteredSalaries = useMemo(() => {
+        return allSalaries.filter(salary => {
+            if (showArchived) return true;
+            return !salary.batch_id || salary.batch_is_active === true;
+        });
+    }, [allSalaries, showArchived]);
 
     const handleAddEmployee = async (e) => {
         e.preventDefault();
@@ -69,11 +85,13 @@ function SalariesPage() {
             payment_type: paymentType, payment_date: paymentDate,
             user_id: user.id, batch_id: selectedBatchId || null
         }]);
-        if (error) alert(error.message);
-        else {
-            setPaymentAmount(''); setSelectedBatchId('');
-            const { data } = await supabase.from('salaries').select('*, batch:broiler_batches(batch_name)').eq('employee_id', selectedEmployee.id).order('payment_date', { ascending: false });
-            setSalaries(data);
+        if (error) {
+            alert(error.message);
+        } else {
+            setPaymentAmount('');
+            setSelectedBatchId('');
+            const { data } = await supabase.rpc('get_salaries_by_employee', { employee_uuid: selectedEmployee.id });
+            setAllSalaries(data || []);
         }
         setIsAddingPayment(false);
     };
@@ -86,9 +104,9 @@ function SalariesPage() {
                     <div className="bg-white p-6 rounded-lg shadow-md mb-6">
                         <h2 className="text-2xl font-semibold mb-4">Добавить сотрудника</h2>
                         <form onSubmit={handleAddEmployee} className="space-y-4">
-                            <div><label>ФИО</label><input type="text" value={newName} onChange={e => setNewName(e.target.value)} required className="w-full p-2 border rounded"/></div>
-                            <div><label>Должность</label><input type="text" value={newPosition} onChange={e => setNewPosition(e.target.value)} className="w-full p-2 border rounded"/></div>
-                            <button type="submit" disabled={isAddingEmployee} className="w-full bg-indigo-600 text-white p-2 rounded disabled:bg-gray-400">{isAddingEmployee ? 'Добавление...' : 'Добавить'}</button>
+                            <div><label className="block text-sm font-medium">ФИО</label><input type="text" value={newName} onChange={e => setNewName(e.target.value)} required className="mt-1 w-full p-2 border rounded-md"/></div>
+                            <div><label className="block text-sm font-medium">Должность</label><input type="text" value={newPosition} onChange={e => setNewPosition(e.target.value)} className="mt-1 w-full p-2 border rounded-md"/></div>
+                            <button type="submit" disabled={isAddingEmployee} className="w-full bg-indigo-600 text-white p-2 rounded-md disabled:bg-gray-400">{isAddingEmployee ? 'Добавление...' : 'Добавить'}</button>
                         </form>
                     </div>
                     <div className="bg-white p-6 rounded-lg shadow-md">
@@ -96,7 +114,7 @@ function SalariesPage() {
                         {loading ? <p>Загрузка...</p> :
                         <ul className="space-y-2">
                             {employees.map(emp => (
-                                <li key={emp.id} onClick={() => setSelectedEmployee(emp)} className={`p-3 rounded cursor-pointer transition-colors ${selectedEmployee?.id === emp.id ? 'bg-indigo-100' : 'hover:bg-gray-100'}`}>
+                                <li key={emp.id} onClick={() => setSelectedEmployee(emp)} className={`p-3 rounded-lg cursor-pointer transition-colors ${selectedEmployee?.id === emp.id ? 'bg-indigo-100' : 'hover:bg-gray-100'}`}>
                                     <p className="font-bold">{emp.full_name}</p><p className="text-sm text-gray-500">{emp.position}</p>
                                 </li>
                             ))}
@@ -106,7 +124,14 @@ function SalariesPage() {
                 <div className="md:col-span-2">
                     {selectedEmployee ? (
                         <div className="bg-white p-6 rounded-lg shadow-md">
-                            <h2 className="text-2xl font-semibold mb-4">Выплаты для: <span className="text-indigo-600">{selectedEmployee.full_name}</span></h2>
+                            <div className="flex flex-wrap justify-between items-center mb-4 gap-4">
+                                <h2 className="text-2xl font-semibold">Выплаты для: <span className="text-indigo-600">{selectedEmployee.full_name}</span></h2>
+                                <label className="flex items-center text-sm text-gray-600 cursor-pointer">
+                                    <input type="checkbox" checked={showArchived} onChange={() => setShowArchived(!showArchived)} className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"/>
+                                    <span className="ml-2">Показать архивные</span>
+                                </label>
+                            </div>
+
                             <form onSubmit={handleAddPayment} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end mb-6 pb-6 border-b">
                                 <div><label className="text-sm">Дата</label><input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} required className="w-full p-2 border rounded"/></div>
                                 <div><label className="text-sm">Сумма</label><input type="number" step="0.01" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} required className="w-full p-2 border rounded"/></div>
@@ -119,22 +144,26 @@ function SalariesPage() {
                                 </div>
                                 <button type="submit" disabled={isAddingPayment} className="bg-green-600 text-white p-2 rounded disabled:bg-gray-400">{isAddingPayment ? 'Добавление...' : 'Добавить'}</button>
                             </form>
-                            <table className="w-full text-sm">
-                                <thead className="text-left text-gray-500"><tr><th className="py-2">Дата/Время</th><th className="py-2">Тип</th><th className="py-2">Партия</th><th className="py-2">Сумма</th></tr></thead>
-                                <tbody>
-                                    {salaries.map(sal => (
-                                        <tr key={sal.id} className="border-b">
-                                            <td className="py-2"><p>{new Date(sal.payment_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(sal.created_at).toLocaleTimeString()}</p></td>
-                                            <td className="py-2 font-semibold capitalize">{sal.payment_type}</td>
-                                            <td className="py-2">{sal.batch ? <span className="text-xs bg-blue-100 text-blue-800 rounded-full px-2 py-1">{sal.batch.batch_name}</span> : '–'}</td>
-                                            <td className="py-2 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sal.amount)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="text-left text-gray-500"><tr><th className="py-2">Дата/Время</th><th className="py-2">Тип</th><th className="py-2">Партия</th><th className="py-2">Сумма</th></tr></thead>
+                                    <tbody>
+                                        {filteredSalaries.map(sal => (
+                                            <tr key={sal.id} className="border-b">
+                                                <td className="py-2"><p>{new Date(sal.payment_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(sal.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p></td>
+                                                <td className="py-2 font-semibold capitalize">{sal.payment_type}</td>
+                                                <td className="py-2">{sal.batch_name ? <span className={`text-xs rounded-full px-2 py-1 ${sal.batch_is_active ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-600'}`}>{sal.batch_name}</span> : '–'}</td>
+                                                <td className="py-2 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sal.amount)}</td>
+                                            </tr>
+                                        ))}
+                                        {filteredSalaries.length === 0 && (<tr><td colSpan="4" className="text-center py-4 text-gray-500">Выплат не найдено.</td></tr>)}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     ) : (
-                        <div className="flex items-center justify-center bg-white p-6 rounded-lg shadow-md h-full min-h-[200px]"><p className="text-gray-500">Выберите сотрудника</p></div>
+                        <div className="flex items-center justify-center bg-white p-6 rounded-lg shadow-md h-full min-h-[200px]"><p className="text-gray-500">Выберите сотрудника для просмотра выплат</p></div>
                     )}
                 </div>
             </div>
