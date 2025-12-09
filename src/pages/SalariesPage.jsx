@@ -8,11 +8,9 @@ function SalariesPage() {
     const [allSalaries, setAllSalaries] = useState([]);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [loadingSalaries, setLoadingSalaries] = useState(false); // Отдельный лоадер для зарплат
     const [activeBatches, setActiveBatches] = useState([]);
-
-    // Состояние для фильтра архивных
     const [showArchived, setShowArchived] = useState(false);
-
     const [newName, setNewName] = useState('');
     const [newPosition, setNewPosition] = useState('');
     const [isAddingEmployee, setIsAddingEmployee] = useState(false);
@@ -42,6 +40,7 @@ function SalariesPage() {
     useEffect(() => {
         if (selectedEmployee) {
             const fetchSalaries = async () => {
+                setLoadingSalaries(true);
                 const { data, error } = await supabase.rpc('get_salaries_by_employee', {
                     employee_uuid: selectedEmployee.id
                 });
@@ -49,8 +48,9 @@ function SalariesPage() {
                     console.error('Ошибка загрузки выплат:', error);
                     setAllSalaries([]);
                 } else {
-                    setAllSalaries(data);
+                    setAllSalaries(data || []); // Убедимся, что это массив, даже если вернется null
                 }
+                setLoadingSalaries(false);
             };
             fetchSalaries();
         } else {
@@ -90,6 +90,7 @@ function SalariesPage() {
         } else {
             setPaymentAmount('');
             setSelectedBatchId('');
+            // Перезагружаем данные
             const { data } = await supabase.rpc('get_salaries_by_employee', { employee_uuid: selectedEmployee.id });
             setAllSalaries(data || []);
         }
@@ -149,7 +150,8 @@ function SalariesPage() {
                                 <table className="w-full text-sm">
                                     <thead className="text-left text-gray-500"><tr><th className="py-2">Дата/Время</th><th className="py-2">Тип</th><th className="py-2">Партия</th><th className="py-2">Сумма</th></tr></thead>
                                     <tbody>
-                                        {filteredSalaries.map(sal => (
+                                        {loadingSalaries ? (<tr><td colSpan="4" className="text-center py-4">Загрузка выплат...</td></tr>) :
+                                        filteredSalaries.map(sal => (
                                             <tr key={sal.id} className="border-b">
                                                 <td className="py-2"><p>{new Date(sal.payment_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(sal.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p></td>
                                                 <td className="py-2 font-semibold capitalize">{sal.payment_type}</td>
@@ -157,7 +159,7 @@ function SalariesPage() {
                                                 <td className="py-2 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(sal.amount)}</td>
                                             </tr>
                                         ))}
-                                        {filteredSalaries.length === 0 && (<tr><td colSpan="4" className="text-center py-4 text-gray-500">Выплат не найдено.</td></tr>)}
+                                        {!loadingSalaries && filteredSalaries.length === 0 && (<tr><td colSpan="4" className="text-center py-4 text-gray-500">Выплат не найдено.</td></tr>)}
                                     </tbody>
                                 </table>
                             </div>
