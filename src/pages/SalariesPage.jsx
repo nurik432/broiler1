@@ -25,6 +25,21 @@ function SalariesPage() {
     const [editStartDate, setEditStartDate] = useState('');
     const [isSavingEdit, setIsSavingEdit] = useState(false);
 
+    // Состояния для удаления сотрудника
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    // Состояния для редактирования выплаты
+    const [editingPayment, setEditingPayment] = useState(null);
+    const [editPaymentDate, setEditPaymentDate] = useState('');
+    const [editPaymentAmount, setEditPaymentAmount] = useState('');
+    const [editPaymentType, setEditPaymentType] = useState('аванс');
+    const [editPaymentBatchId, setEditPaymentBatchId] = useState('');
+    const [isSavingPayment, setIsSavingPayment] = useState(false);
+
+    // Состояния для удаления выплаты
+    const [deletingPaymentId, setDeletingPaymentId] = useState(null);
+
     // Состояния для добавления выплаты
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
     const [paymentAmount, setPaymentAmount] = useState('');
@@ -57,26 +72,48 @@ function SalariesPage() {
         if (selectedEmployee) {
             const fetchSalaries = async () => {
                 setLoadingSalaries(true);
-                const { data, error } = await supabase
-                    .from('salaries')
-                    .select(`
-                        *,
-                        batch_name:broiler_batches(batch_name, is_active)
-                    `)
-                    .eq('employee_id', selectedEmployee.id)
-                    .order('payment_date', { ascending: false });
 
-                if (error) {
-                    console.error('Ошибка загрузки выплат:', error);
-                    setAllSalaries([]);
+                // Сначала попробуем через RPC функцию
+                const { data: rpcData, error: rpcError } = await supabase.rpc('get_salaries_by_employee', {
+                    employee_uuid: selectedEmployee.id
+                });
+
+                console.log('RPC Response:', { rpcData, rpcError });
+
+                if (rpcError) {
+                    console.error('Ошибка RPC, пробуем прямой запрос:', rpcError);
+
+                    // Если RPC не работает, используем прямой запрос
+                    const { data, error } = await supabase
+                        .from('salaries')
+                        .select(`
+                            *,
+                            broiler_batches (
+                                batch_name,
+                                is_active
+                            )
+                        `)
+                        .eq('employee_id', selectedEmployee.id)
+                        .order('payment_date', { ascending: false });
+
+                    console.log('Direct Query Response:', { data, error });
+
+                    if (error) {
+                        console.error('Ошибка загрузки выплат:', error);
+                        setAllSalaries([]);
+                    } else {
+                        // Преобразуем данные в нужный формат
+                        const formattedData = (data || []).map(salary => ({
+                            ...salary,
+                            batch_name: salary.broiler_batches?.batch_name || null,
+                            batch_is_active: salary.broiler_batches?.is_active || false
+                        }));
+                        console.log('Formatted Data:', formattedData);
+                        setAllSalaries(formattedData);
+                    }
                 } else {
-                    // Преобразуем данные в нужный формат
-                    const formattedData = (data || []).map(salary => ({
-                        ...salary,
-                        batch_name: salary.batch_name?.[0]?.batch_name || null,
-                        batch_is_active: salary.batch_name?.[0]?.is_active || false
-                    }));
-                    setAllSalaries(formattedData);
+                    console.log('RPC успешно, данные:', rpcData);
+                    setAllSalaries(rpcData || []);
                 }
                 setLoadingSalaries(false);
             };
@@ -208,6 +245,133 @@ function SalariesPage() {
         setIsSavingEdit(false);
     };
 
+    const handleDeleteEmployee = async () => {
+        if (!selectedEmployee) return;
+
+        setIsDeleting(true);
+
+        // Сначала удаляем все выплаты сотрудника
+        const { error: salariesError } = await supabase
+            .from('salaries')
+            .delete()
+            .eq('employee_id', selectedEmployee.id);
+
+        if (salariesError) {
+            alert('Ошибка при удалении выплат: ' + salariesError.message);
+            setIsDeleting(false);
+            return;
+        }
+
+        // Затем удаляем самого сотрудника
+        const { error: employeeError } = await supabase
+            .from('employees')
+            .delete()
+            .eq('id', selectedEmployee.id);
+
+        if (employeeError) {
+            alert('Ошибка при удалении сотрудника: ' + employeeError.message);
+        } else {
+            await fetchEmployees();
+            setSelectedEmployee(null);
+            setShowDeleteConfirm(false);
+            setIsEditingEmployee(false);
+        }
+
+        setIsDeleting(false);
+    };
+
+    const handleStartEditPayment = (payment) => {
+        setEditingPayment(payment.id);
+        setEditPaymentDate(payment.payment_date);
+        setEditPaymentAmount(payment.amount);
+        setEditPaymentType(payment.payment_type);
+        setEditPaymentBatchId(payment.batch_id || '');
+    };
+
+    const handleCancelEditPayment = () => {
+        setEditingPayment(null);
+        setEditPaymentDate('');
+        setEditPaymentAmount('');
+        setEditPaymentType('аванс');
+        setEditPaymentBatchId('');
+    };
+
+    const handleSavePayment = async (paymentId) => {
+        setIsSavingPayment(true);
+
+        const { error } = await supabase
+            .from('salaries')
+            .update({
+                payment_date: editPaymentDate,
+                amount: Number(editPaymentAmount),
+                payment_type: editPaymentType,
+                batch_id: editPaymentBatchId || null
+            })
+            .eq('id', paymentId);
+
+        if (error) {
+            alert('Ошибка при сохранении: ' + error.message);
+        } else {
+            // Перезагружаем выплаты
+            await reloadSalaries();
+            setEditingPayment(null);
+        }
+
+        setIsSavingPayment(false);
+    };
+
+    const handleDeletePayment = async (paymentId) => {
+        if (!confirm('Вы уверены, что хотите удалить эту выплату?')) {
+            return;
+        }
+
+        setDeletingPaymentId(paymentId);
+
+        const { error } = await supabase
+            .from('salaries')
+            .delete()
+            .eq('id', paymentId);
+
+        if (error) {
+            alert('Ошибка при удалении: ' + error.message);
+        } else {
+            await reloadSalaries();
+        }
+
+        setDeletingPaymentId(null);
+    };
+
+    const reloadSalaries = async () => {
+        if (!selectedEmployee) return;
+
+        const { data: rpcData, error: rpcError } = await supabase.rpc('get_salaries_by_employee', {
+            employee_uuid: selectedEmployee.id
+        });
+
+        if (rpcError) {
+            const { data } = await supabase
+                .from('salaries')
+                .select(`
+                    *,
+                    broiler_batches (
+                        batch_name,
+                        is_active
+                    )
+                `)
+                .eq('employee_id', selectedEmployee.id)
+                .order('payment_date', { ascending: false });
+
+            const formattedData = (data || []).map(salary => ({
+                ...salary,
+                batch_name: salary.broiler_batches?.batch_name || null,
+                batch_is_active: salary.broiler_batches?.is_active || false
+            }));
+            setAllSalaries(formattedData);
+        } else {
+            setAllSalaries(rpcData || []);
+        }
+    };
+
     const handleAddPayment = async (e) => {
         e.preventDefault();
         if (!selectedEmployee) return;
@@ -238,22 +402,9 @@ function SalariesPage() {
         } else {
             setPaymentAmount('');
             setSelectedBatchId('');
-            // Перезагружаем выплаты
-            const { data } = await supabase
-                .from('salaries')
-                .select(`
-                    *,
-                    batch_name:broiler_batches(batch_name, is_active)
-                `)
-                .eq('employee_id', selectedEmployee.id)
-                .order('payment_date', { ascending: false });
 
-            const formattedData = (data || []).map(salary => ({
-                ...salary,
-                batch_name: salary.batch_name?.[0]?.batch_name || null,
-                batch_is_active: salary.batch_name?.[0]?.is_active || false
-            }));
-            setAllSalaries(formattedData);
+            // Перезагружаем выплаты
+            await reloadSalaries();
         }
         setIsAddingPayment(false);
     };
@@ -363,6 +514,12 @@ function SalariesPage() {
                                     >
                                         Редактировать
                                     </button>
+                                    <button
+                                        onClick={() => setShowDeleteConfirm(true)}
+                                        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
+                                    >
+                                        Удалить
+                                    </button>
                                     <label className="flex items-center text-sm text-gray-600 cursor-pointer">
                                         <input
                                             type="checkbox"
@@ -374,6 +531,53 @@ function SalariesPage() {
                                     </label>
                                 </div>
                             </div>
+
+                            {/* Модальное окно подтверждения удаления */}
+                            {showDeleteConfirm && (
+                                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                                    <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+                                        <div className="flex items-center gap-3 mb-4">
+                                            <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                                                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                                </svg>
+                                            </div>
+                                            <div>
+                                                <h3 className="text-lg font-bold text-gray-900">Удалить сотрудника?</h3>
+                                                <p className="text-sm text-gray-600 mt-1">Это действие необратимо</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
+                                            <p className="text-sm text-gray-700">
+                                                <strong>Внимание!</strong> Будут удалены:
+                                            </p>
+                                            <ul className="text-sm text-gray-700 mt-2 ml-4 list-disc">
+                                                <li>Сотрудник: <strong>{selectedEmployee.full_name}</strong></li>
+                                                <li>Все выплаты этого сотрудника ({filteredSalaries.length} записей)</li>
+                                                <li>Общая сумма выплат: <strong>{formatCurrency(salaryTotals.totalAll)}</strong></li>
+                                            </ul>
+                                        </div>
+
+                                        <div className="flex gap-3">
+                                            <button
+                                                onClick={() => setShowDeleteConfirm(false)}
+                                                disabled={isDeleting}
+                                                className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 disabled:opacity-50"
+                                            >
+                                                Отмена
+                                            </button>
+                                            <button
+                                                onClick={handleDeleteEmployee}
+                                                disabled={isDeleting}
+                                                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:bg-gray-400"
+                                            >
+                                                {isDeleting ? 'Удаление...' : 'Удалить'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
                             {isEditingEmployee ? (
                                 <form onSubmit={handleSaveEdit} className="mb-6 pb-6 border-b bg-blue-50 p-4 rounded-lg">
@@ -528,45 +732,133 @@ function SalariesPage() {
                                             <th className="py-2">Тип</th>
                                             <th className="py-2">Партия</th>
                                             <th className="py-2 text-right">Сумма</th>
+                                            <th className="py-2 text-center">Действия</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {loadingSalaries ? (
-                                            <tr><td colSpan="4" className="text-center py-4">Загрузка выплат...</td></tr>
+                                            <tr><td colSpan="5" className="text-center py-4">Загрузка выплат...</td></tr>
                                         ) : filteredSalaries.length > 0 ? (
                                             filteredSalaries.map(sal => (
-                                                <tr key={sal.id} className="border-b hover:bg-gray-50">
-                                                    <td className="py-3">
-                                                        <p className="font-medium">{new Date(sal.payment_date).toLocaleDateString()}</p>
-                                                        <p className="text-xs text-gray-400">
-                                                            {new Date(sal.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
-                                                        </p>
-                                                    </td>
-                                                    <td className="py-3">
-                                                        <span className={`inline-block px-2 py-1 rounded-full text-xs font-semibold ${
-                                                            sal.payment_type === 'аванс' 
-                                                                ? 'bg-blue-100 text-blue-800' 
-                                                                : 'bg-green-100 text-green-800'
-                                                        }`}>
-                                                            {sal.payment_type}
-                                                        </span>
-                                                    </td>
-                                                    <td className="py-3">
-                                                        {sal.batch_name ? (
-                                                            <span className={`text-xs rounded-full px-2 py-1 ${
-                                                                sal.batch_is_active 
-                                                                    ? 'bg-purple-100 text-purple-800' 
-                                                                    : 'bg-gray-200 text-gray-600'
+                                                editingPayment === sal.id ? (
+                                                    // Режим редактирования
+                                                    <tr key={sal.id} className="border-b bg-blue-50">
+                                                        <td className="py-3">
+                                                            <input
+                                                                type="date"
+                                                                value={editPaymentDate}
+                                                                onChange={e => setEditPaymentDate(e.target.value)}
+                                                                className="w-full p-1 border rounded text-sm"
+                                                            />
+                                                        </td>
+                                                        <td className="py-3">
+                                                            <select
+                                                                value={editPaymentType}
+                                                                onChange={e => setEditPaymentType(e.target.value)}
+                                                                className="w-full p-1 border rounded text-sm bg-white"
+                                                            >
+                                                                <option value="аванс">Аванс</option>
+                                                                <option value="зарплата">Зарплата</option>
+                                                            </select>
+                                                        </td>
+                                                        <td className="py-3">
+                                                            <select
+                                                                value={editPaymentBatchId}
+                                                                onChange={e => setEditPaymentBatchId(e.target.value)}
+                                                                className="w-full p-1 border rounded text-sm bg-white"
+                                                            >
+                                                                <option value="">-- Нет --</option>
+                                                                {activeBatches.map(b => (
+                                                                    <option key={b.id} value={b.id}>{b.batch_name}</option>
+                                                                ))}
+                                                            </select>
+                                                        </td>
+                                                        <td className="py-3">
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                value={editPaymentAmount}
+                                                                onChange={e => setEditPaymentAmount(e.target.value)}
+                                                                className="w-full p-1 border rounded text-sm text-right"
+                                                            />
+                                                        </td>
+                                                        <td className="py-3">
+                                                            <div className="flex gap-1 justify-center">
+                                                                <button
+                                                                    onClick={() => handleSavePayment(sal.id)}
+                                                                    disabled={isSavingPayment}
+                                                                    className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:bg-gray-400"
+                                                                    title="Сохранить"
+                                                                >
+                                                                    ✓
+                                                                </button>
+                                                                <button
+                                                                    onClick={handleCancelEditPayment}
+                                                                    disabled={isSavingPayment}
+                                                                    className="px-2 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600 disabled:bg-gray-400"
+                                                                    title="Отмена"
+                                                                >
+                                                                    ✕
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ) : (
+                                                    // Режим просмотра
+                                                    <tr key={sal.id} className="border-b hover:bg-gray-50">
+                                                        <td className="py-3">
+                                                            <p className="font-medium">{new Date(sal.payment_date).toLocaleDateString()}</p>
+                                                            {sal.created_at && (
+                                                                <p className="text-xs text-gray-400">
+                                                                    {new Date(sal.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                                                </p>
+                                                            )}
+                                                        </td>
+                                                        <td className="py-3">
+                                                            <span className={`inline-block px-2 py-1 rounded-full text-xs font-semibold ${
+                                                                sal.payment_type === 'аванс' 
+                                                                    ? 'bg-blue-100 text-blue-800' 
+                                                                    : 'bg-green-100 text-green-800'
                                                             }`}>
-                                                                {sal.batch_name}
+                                                                {sal.payment_type}
                                                             </span>
-                                                        ) : '–'}
-                                                    </td>
-                                                    <td className="py-3 font-bold text-right">{formatCurrency(sal.amount)}</td>
-                                                </tr>
+                                                        </td>
+                                                        <td className="py-3">
+                                                            {sal.batch_name ? (
+                                                                <span className={`text-xs rounded-full px-2 py-1 ${
+                                                                    sal.batch_is_active 
+                                                                        ? 'bg-purple-100 text-purple-800' 
+                                                                        : 'bg-gray-200 text-gray-600'
+                                                                }`}>
+                                                                    {sal.batch_name}
+                                                                </span>
+                                                            ) : '–'}
+                                                        </td>
+                                                        <td className="py-3 font-bold text-right">{formatCurrency(sal.amount)}</td>
+                                                        <td className="py-3">
+                                                            <div className="flex gap-1 justify-center">
+                                                                <button
+                                                                    onClick={() => handleStartEditPayment(sal)}
+                                                                    className="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
+                                                                    title="Редактировать"
+                                                                >
+                                                                    ✎
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleDeletePayment(sal.id)}
+                                                                    disabled={deletingPaymentId === sal.id}
+                                                                    className="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700 disabled:bg-gray-400"
+                                                                    title="Удалить"
+                                                                >
+                                                                    {deletingPaymentId === sal.id ? '...' : '🗑'}
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )
                                             ))
                                         ) : (
-                                            <tr><td colSpan="4" className="text-center py-4 text-gray-500">Выплат не найдено.</td></tr>
+                                            <tr><td colSpan="5" className="text-center py-4 text-gray-500">Выплат не найдено.</td></tr>
                                         )}
                                     </tbody>
                                 </table>
