@@ -57,14 +57,26 @@ function SalariesPage() {
         if (selectedEmployee) {
             const fetchSalaries = async () => {
                 setLoadingSalaries(true);
-                const { data, error } = await supabase.rpc('get_salaries_by_employee', {
-                    employee_uuid: selectedEmployee.id
-                });
+                const { data, error } = await supabase
+                    .from('salaries')
+                    .select(`
+                        *,
+                        batch_name:broiler_batches(batch_name, is_active)
+                    `)
+                    .eq('employee_id', selectedEmployee.id)
+                    .order('payment_date', { ascending: false });
+
                 if (error) {
                     console.error('Ошибка загрузки выплат:', error);
                     setAllSalaries([]);
                 } else {
-                    setAllSalaries(data || []);
+                    // Преобразуем данные в нужный формат
+                    const formattedData = (data || []).map(salary => ({
+                        ...salary,
+                        batch_name: salary.batch_name?.[0]?.batch_name || null,
+                        batch_is_active: salary.batch_name?.[0]?.is_active || false
+                    }));
+                    setAllSalaries(formattedData);
                 }
                 setLoadingSalaries(false);
             };
@@ -226,10 +238,22 @@ function SalariesPage() {
         } else {
             setPaymentAmount('');
             setSelectedBatchId('');
-            const { data } = await supabase.rpc('get_salaries_by_employee', {
-                employee_uuid: selectedEmployee.id
-            });
-            setAllSalaries(data || []);
+            // Перезагружаем выплаты
+            const { data } = await supabase
+                .from('salaries')
+                .select(`
+                    *,
+                    batch_name:broiler_batches(batch_name, is_active)
+                `)
+                .eq('employee_id', selectedEmployee.id)
+                .order('payment_date', { ascending: false });
+
+            const formattedData = (data || []).map(salary => ({
+                ...salary,
+                batch_name: salary.batch_name?.[0]?.batch_name || null,
+                batch_is_active: salary.batch_name?.[0]?.is_active || false
+            }));
+            setAllSalaries(formattedData);
         }
         setIsAddingPayment(false);
     };
