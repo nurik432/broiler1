@@ -40,6 +40,58 @@ function BatchesPage() {
     useEffect(() => {
         fetchBatches();
     }, [view]);
+/**
+ * Формирует CSV‑файл из текущего массива архивных партий
+ * и заставляет браузер скачать его.
+ * Работает только когда view === 'archived'.
+ */
+const exportArchivedToCSV = () => {
+  if (view !== 'archived') return;          // защита – не экспортируем в другом режиме
+
+  // Порядок колонок в таблице
+  const headers = [
+    'batch_name',
+    'start_date',
+    'initial_quantity',
+    'current_quantity',
+    'total_mortality',
+  ];
+
+  // Формируем строки CSV, экранируя специальные символы
+  const rows = batches.map(batch => {
+    const values = [
+      batch.batch_name ?? '',
+      batch.start_date
+        ? new Date(batch.start_date).toISOString().split('T')[0]   // YYYY‑MM‑DD
+        : '',
+      batch.initial_quantity ?? '',
+      batch.current_quantity ?? '',
+      batch.total_mortality ?? '',
+    ];
+
+    return values
+      .map(v => {
+        const s = String(v);
+        // Если в ячейке запятая, кавычка или перевод строки – оборачиваем в кавычки и удваиваем кавычки
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      })
+      .join(',');
+  });
+
+  // Собираем окончательный CSV‑текст
+  const csv = [headers.join(','), ...rows].join('\n');
+
+  // Скачиваем файл
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', 'archived_batches.csv');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 
     // Функция для изменения статуса партии (архивация/восстановление)
     const handleToggleBatchStatus = async (batchId, newStatus) => {
@@ -102,6 +154,15 @@ function BatchesPage() {
                 <div className="flex border-b mb-4">
                     <button onClick={() => setView('active')} className={`py-2 px-4 font-semibold ${view === 'active' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>Активные</button>
                     <button onClick={() => setView('archived')} className={`py-2 px-4 font-semibold ${view === 'archived' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>Архивные</button>
+                     {/* Кнопка экспорта – показывается только в архиве */}
+  {view === 'archived' && (
+    <button
+      onClick={exportArchivedToCSV}
+      className="ml-auto py-2 px-4 bg-green-600 text-white rounded-md hover:bg-green-700"
+    >
+      Экспорт в Excel
+    </button>
+  )}
                 </div>
                 {isFetching ? (
                     <p className="text-center text-gray-500 py-4">Загрузка партий...</p>
