@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { Link } from 'react-router-dom';
+import * as XLSX from 'xlsx';
+
 
 function BatchesPage() {
     // Состояние для переключения между "active" и "archived"
@@ -41,9 +43,15 @@ function BatchesPage() {
         fetchBatches();
     }, [view]);
 
-const exportBatchToCSV = async (batchId) => {
+/**
+ * Export ALL information about a batch (journal, expenses, sales, feed,
+ * salaries) to an .xlsx file – each logical block goes to its own sheet.
+ *
+ * @param {string} batchId  UUID партии, которую нужно выгрузить
+ */
+const exportBatchToXLSX = async (batchId) => {
   try {
-    /* 1️⃣ Запрашиваем всё, что показывается на странице журнала партии */
+    // ---------- 1️⃣ Получаем всё, что уже показывается на странице журнала ----------
     const [
       batchRes,
       logsRes,
@@ -66,7 +74,7 @@ const exportBatchToCSV = async (batchId) => {
       supabase.rpc('get_salaries_by_batch', { batch_uuid: batchId }),
     ]);
 
-    /* 2️⃣ Если хотя‑бы один запрос упал – бросаем ошибку */
+    // ---------- 2️⃣ Проверяем ошибки ----------
     if (batchRes.error)   throw batchRes.error;
     if (logsRes.error)    throw logsRes.error;
     if (expensesRes.error) throw expensesRes.error;
@@ -74,119 +82,119 @@ const exportBatchToCSV = async (batchId) => {
     if (feedRes.error)    throw feedRes.error;
     if (salariesRes.error) throw salariesRes.error;
 
-    /* 3️⃣ Формируем CSV‑строку.
-       Мы делим файл на секции:   Партия → Журнал → Расходы → Продажи → Корм → Зарплаты
-       Пустая строка между секциями позволяет открыть их как отдельные таблицы в Excel.   */
-    const csvLines = [];
+    // ---------- 3️⃣ Формируем данные для листов ----------
+    const wb = XLSX.utils.book_new();   // новая рабочая книга
 
-    // ── Партия ──────────────────────────────────────────────
-    csvLines.push('Партия');
-    csvLines.push('batch_name,start_date,initial_quantity,is_active');
-    const b = batchRes.data;
-    csvLines.push(
-      [b.batch_name, b.start_date, b.initial_quantity, b.is_active]
-        .map(v => `${v}`).join(',')
-    );
-    csvLines.push(''); // пустая строка‑разделитель
+    // 3.1 Партия
+    const batchData = [
+      ['batch_name', 'start_date', 'initial_quantity', 'is_active'],
+      [
+        batchRes.data.batch_name,
+        batchRes.data.start_date,
+        batchRes.data.initial_quantity,
+        batchRes.data.is_active,
+      ],
+    ];
+    const wsBatch = XLSX.utils.aoa_to_sheet(batchData);
+    XLSX.utils.book_append_sheet(wb, wsBatch, 'Партия');
 
-    // ── Журнал (daily_logs) ─────────────────────────────────────
-    csvLines.push('Журнал (daily_logs)');
-    csvLines.push('log_date,age,mortality,medicine,dosage,water_consumption');
-    logsRes.data.forEach(log => {
-      const med = log.medicine?.name ?? '';
-      const row = [
-        log.log_date,
-        log.age,
-        log.mortality,
-        med,
-        log.dosage ?? '',
-        log.water_consumption ?? '',
-      ]
-        .map(v => {
-          const s = String(v);
-          // экранирование запятых, кавычек и переводов строки
-          return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-        })
-        .join(',');
-      csvLines.push(row);
-    });
-    csvLines.push('');
+    // 3.2 Журнал (daily_logs)
+    const logsHeader = [
+      'log_date',
+      'age',
+      'mortality',
+      'medicine',
+      'dosage',
+      'water_consumption',
+    ];
+    const logsBody = logsRes.data.map((l) => [
+      l.log_date,
+      l.age,
+      l.mortality,
+      l.medicine?.name ?? '',
+      l.dosage ?? '',
+      l.water_consumption ?? '',
+    ]);
+    const wsLogs = XLSX.utils.aoa_to_sheet([logsHeader, ...logsBody]);
+    XLSX.utils.book_append_sheet(wb, wsLogs, 'Журнал');
 
-    // ── Расходы ──────────────────────────────────────────────────────
-    csvLines.push('Расходы');
-    csvLines.push('expense_date,description,amount');
-    expensesRes.data.forEach(item => {
-      csvLines.push(
-        [item.expense_date, item.description, item.amount]
-          .map(v => {
-            const s = String(v);
-            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-          })
-          .join(',')
-      );
-    });
-    csvLines.push('');
+    // 3.3 Расходы
+    const expHeader = ['expense_date', 'description', 'amount'];
+    const expBody = expensesRes.data.map((e) => [
+      e.expense_date,
+      e.description,
+      e.amount,
+    ]);
+    const wsExp = XLSX.utils.aoa_to_sheet([expHeader, ...expBody]);
+    XLSX.utils.book_append_sheet(wb, wsExp, 'Расходы');
 
-    // ── Продажи ─────────────────────────────────────────────────────
-    csvLines.push('Продажи');
-    csvLines.push('sale_date,customer_name,weight_kg,price_per_kg');
-    salesRes.data.forEach(item => {
-      csvLines.push(
-        [item.sale_date, item.customer_name, item.weight_kg, item.price_per_kg]
-          .map(v => {
-            const s = String(v);
-            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-          })
-          .join(',')
-      );
-    });
-    csvLines.push('');
+    // 3.4 Продажи
+    const salesHeader = [
+      'sale_date',
+      'customer_name',
+      'weight_kg',
+      'price_per_kg',
+    ];
+    const salesBody = salesRes.data.map((s) => [
+      s.sale_date,
+      s.customer_name,
+      s.weight_kg,
+      s.price_per_kg,
+    ]);
+    const wsSales = XLSX.utils.aoa_to_sheet([salesHeader, ...salesBody]);
+    XLSX.utils.book_append_sheet(wb, wsSales, 'Продажи');
 
-    // ── Корм ────────────────────────────────────────────────────────
-    csvLines.push('Корм');
-    csvLines.push('delivery_date,feed_type,quantity_kg');
-    feedRes.data.forEach(item => {
-      csvLines.push(
-        [item.delivery_date, item.feed_type, item.quantity_kg]
-          .map(v => {
-            const s = String(v);
-            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-          })
-          .join(',')
-      );
-    });
-    csvLines.push('');
+    // 3.5 Корм
+    const feedHeader = ['delivery_date', 'feed_type', 'quantity_kg'];
+    const feedBody = feedRes.data.map((f) => [
+      f.delivery_date,
+      f.feed_type,
+      f.quantity_kg,
+    ]);
+    const wsFeed = XLSX.utils.aoa_to_sheet([feedHeader, ...feedBody]);
+    XLSX.utils.book_append_sheet(wb, wsFeed, 'Корм');
 
-    // ── Зарплаты ─────────────────────────────────────────────────────
-    csvLines.push('Зарплаты');
-    csvLines.push('payment_date,employee_name,payment_type,amount');
-    salariesRes.data.forEach(item => {
-      csvLines.push(
-        [item.payment_date, item.employee_name, item.payment_type, item.amount]
-          .map(v => {
-            const s = String(v);
-            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-          })
-          .join(',')
-      );
+    // 3.6 Зарплаты
+    const salHeader = [
+      'payment_date',
+      'employee_name',
+      'payment_type',
+      'amount',
+    ];
+    const salBody = salariesRes.data.map((s) => [
+      s.payment_date,
+      s.employee_name,
+      s.payment_type,
+      s.amount,
+    ]);
+    const wsSal = XLSX.utils.aoa_to_sheet([salHeader, ...salBody]);
+    XLSX.utils.book_append_sheet(wb, wsSal, 'Зарплаты');
+
+    // ---------- 4️⃣ Генерируем бинарный файл ----------
+    const wbout = XLSX.write(wb, {
+      bookType: 'xlsx',
+      type: 'array',   // получаем Uint8Array
     });
 
-    /* 4️⃣ Скачиваем файл */
-    const csvContent = csvLines.join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // ---------- 5️⃣ Скачиваем ----------
+    const blob = new Blob([wbout], {
+      type:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.setAttribute('download', `batch_${batchId}_data.csv`);
+    a.setAttribute('download', `batch_${batchId}_data.xlsx`);
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch (err) {
-    console.error('Ошибка экспорта партии', err);
+    console.error('❌ Ошибка экспорта в XLSX', err);
     alert('Не удалось экспортировать данные. Смотрите консоль браузера.');
   }
 };
+
 
     // Функция для изменения статуса партии (архивация/восстановление)
     const handleToggleBatchStatus = async (batchId, newStatus) => {
@@ -276,15 +284,19 @@ const exportBatchToCSV = async (batchId) => {
                                         ) : (
                                             <>
                                                 {/* --- ВОТ НОВАЯ КНОПКА "ОТЧЕТ" --- */}
-                                                <Link to={`/batch/${batch.id}/report`} className="px-4 py-2 text-sm text-center font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600">
+                                                <Link to={`/batch/${batch.id}/report`}
+                                                      className="px-4 py-2 text-sm text-center font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600">
                                                     Отчет
                                                 </Link>
-                                                <button onClick={() => handleToggleBatchStatus(batch.id, true)} className="px-4 py-2 text-sm font-medium text-white bg-green-500 rounded-md hover:bg-green-600">
+                                                <button onClick={() => handleToggleBatchStatus(batch.id, true)}
+                                                        className="px-4 py-2 text-sm font-medium text-white bg-green-500 rounded-md hover:bg-green-600">
                                                     Восстановить
                                                 </button>
-                                                 {/* 👇 Новая кнопка «Экспортировать» */}
-                                                <button onClick={() => exportBatchToCSV(batch.id)} className="px-4 py-2 text-sm font-medium text-white bg-gray-700 rounded-md hover:bg-gray-800">
-                                                    Экспортировать
+                                                {/* 👇 Новая кнопка «Экспортировать» */}
+                                                <button
+                                                    onClick={() => exportBatchToXLSX(batch.id)}
+                                                    className="px-4 py-2 text-sm font-medium text-white bg-gray-700 rounded-md hover:bg-gray-800">
+                                                    Экспортировать (XLSX)
                                                 </button>
                                             </>
                                         )}
