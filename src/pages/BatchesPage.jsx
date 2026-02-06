@@ -40,57 +40,152 @@ function BatchesPage() {
     useEffect(() => {
         fetchBatches();
     }, [view]);
-/**
- * Формирует CSV‑файл из текущего массива архивных партий
- * и заставляет браузер скачать его.
- * Работает только когда view === 'archived'.
- */
-const exportArchivedToCSV = () => {
-  if (view !== 'archived') return;          // защита – не экспортируем в другом режиме
 
-  // Порядок колонок в таблице
-  const headers = [
-    'batch_name',
-    'start_date',
-    'initial_quantity',
-    'current_quantity',
-    'total_mortality',
-  ];
+const exportBatchToCSV = async (batchId) => {
+  try {
+    /* 1️⃣ Запрашиваем всё, что показывается на странице журнала партии */
+    const [
+      batchRes,
+      logsRes,
+      medicinesRes,
+      expensesRes,
+      salesRes,
+      feedRes,
+      salariesRes,
+    ] = await Promise.all([
+      supabase.from('broiler_batches').select('*').eq('id', batchId).single(),
+      supabase
+        .from('daily_logs')
+        .select('*, medicine:medicines(name)')
+        .eq('batch_id', batchId)
+        .order('log_date', { ascending: false }),
+      supabase.from('medicines').select('id, name'),
+      supabase.rpc('get_expenses_by_batch', { batch_uuid: batchId }),
+      supabase.rpc('get_sales_by_batch', { batch_uuid: batchId }),
+      supabase.rpc('get_feed_by_batch', { batch_uuid: batchId }),
+      supabase.rpc('get_salaries_by_batch', { batch_uuid: batchId }),
+    ]);
 
-  // Формируем строки CSV, экранируя специальные символы
-  const rows = batches.map(batch => {
-    const values = [
-      batch.batch_name ?? '',
-      batch.start_date
-        ? new Date(batch.start_date).toISOString().split('T')[0]   // YYYY‑MM‑DD
-        : '',
-      batch.initial_quantity ?? '',
-      batch.current_quantity ?? '',
-      batch.total_mortality ?? '',
-    ];
+    /* 2️⃣ Если хотя‑бы один запрос упал – бросаем ошибку */
+    if (batchRes.error)   throw batchRes.error;
+    if (logsRes.error)    throw logsRes.error;
+    if (expensesRes.error) throw expensesRes.error;
+    if (salesRes.error)   throw salesRes.error;
+    if (feedRes.error)    throw feedRes.error;
+    if (salariesRes.error) throw salariesRes.error;
 
-    return values
-      .map(v => {
-        const s = String(v);
-        // Если в ячейке запятая, кавычка или перевод строки – оборачиваем в кавычки и удваиваем кавычки
-        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      })
-      .join(',');
-  });
+    /* 3️⃣ Формируем CSV‑строку.
+       Мы делим файл на секции:   Партия → Журнал → Расходы → Продажи → Корм → Зарплаты
+       Пустая строка между секциями позволяет открыть их как отдельные таблицы в Excel.   */
+    const csvLines = [];
 
-  // Собираем окончательный CSV‑текст
-  const csv = [headers.join(','), ...rows].join('\n');
+    // ── Партия ──────────────────────────────────────────────
+    csvLines.push('Партия');
+    csvLines.push('batch_name,start_date,initial_quantity,is_active');
+    const b = batchRes.data;
+    csvLines.push(
+      [b.batch_name, b.start_date, b.initial_quantity, b.is_active]
+        .map(v => `${v}`).join(',')
+    );
+    csvLines.push(''); // пустая строка‑разделитель
 
-  // Скачиваем файл
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.setAttribute('download', 'archived_batches.csv');
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+    // ── Журнал (daily_logs) ─────────────────────────────────────
+    csvLines.push('Журнал (daily_logs)');
+    csvLines.push('log_date,age,mortality,medicine,dosage,water_consumption');
+    logsRes.data.forEach(log => {
+      const med = log.medicine?.name ?? '';
+      const row = [
+        log.log_date,
+        log.age,
+        log.mortality,
+        med,
+        log.dosage ?? '',
+        log.water_consumption ?? '',
+      ]
+        .map(v => {
+          const s = String(v);
+          // экранирование запятых, кавычек и переводов строки
+          return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        })
+        .join(',');
+      csvLines.push(row);
+    });
+    csvLines.push('');
+
+    // ── Расходы ──────────────────────────────────────────────────────
+    csvLines.push('Расходы');
+    csvLines.push('expense_date,description,amount');
+    expensesRes.data.forEach(item => {
+      csvLines.push(
+        [item.expense_date, item.description, item.amount]
+          .map(v => {
+            const s = String(v);
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+          })
+          .join(',')
+      );
+    });
+    csvLines.push('');
+
+    // ── Продажи ─────────────────────────────────────────────────────
+    csvLines.push('Продажи');
+    csvLines.push('sale_date,customer_name,weight_kg,price_per_kg');
+    salesRes.data.forEach(item => {
+      csvLines.push(
+        [item.sale_date, item.customer_name, item.weight_kg, item.price_per_kg]
+          .map(v => {
+            const s = String(v);
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+          })
+          .join(',')
+      );
+    });
+    csvLines.push('');
+
+    // ── Корм ────────────────────────────────────────────────────────
+    csvLines.push('Корм');
+    csvLines.push('delivery_date,feed_type,quantity_kg');
+    feedRes.data.forEach(item => {
+      csvLines.push(
+        [item.delivery_date, item.feed_type, item.quantity_kg]
+          .map(v => {
+            const s = String(v);
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+          })
+          .join(',')
+      );
+    });
+    csvLines.push('');
+
+    // ── Зарплаты ─────────────────────────────────────────────────────
+    csvLines.push('Зарплаты');
+    csvLines.push('payment_date,employee_name,payment_type,amount');
+    salariesRes.data.forEach(item => {
+      csvLines.push(
+        [item.payment_date, item.employee_name, item.payment_type, item.amount]
+          .map(v => {
+            const s = String(v);
+            return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+          })
+          .join(',')
+      );
+    });
+
+    /* 4️⃣ Скачиваем файл */
+    const csvContent = csvLines.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.setAttribute('download', `batch_${batchId}_data.csv`);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error('Ошибка экспорта партии', err);
+    alert('Не удалось экспортировать данные. Смотрите консоль браузера.');
+  }
 };
 
     // Функция для изменения статуса партии (архивация/восстановление)
@@ -154,15 +249,7 @@ const exportArchivedToCSV = () => {
                 <div className="flex border-b mb-4">
                     <button onClick={() => setView('active')} className={`py-2 px-4 font-semibold ${view === 'active' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>Активные</button>
                     <button onClick={() => setView('archived')} className={`py-2 px-4 font-semibold ${view === 'archived' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>Архивные</button>
-                     {/* Кнопка экспорта – показывается только в архиве */}
-  {view === 'archived' && (
-    <button
-      onClick={exportArchivedToCSV}
-      className="ml-auto py-2 px-4 bg-green-600 text-white rounded-md hover:bg-green-700"
-    >
-      Экспорт в Excel
-    </button>
-  )}
+
                 </div>
                 {isFetching ? (
                     <p className="text-center text-gray-500 py-4">Загрузка партий...</p>
@@ -194,6 +281,10 @@ const exportArchivedToCSV = () => {
                                                 </Link>
                                                 <button onClick={() => handleToggleBatchStatus(batch.id, true)} className="px-4 py-2 text-sm font-medium text-white bg-green-500 rounded-md hover:bg-green-600">
                                                     Восстановить
+                                                </button>
+                                                 {/* 👇 Новая кнопка «Экспортировать» */}
+                                                <button onClick={() => exportBatchToCSV(batch.id)} className="px-4 py-2 text-sm font-medium text-white bg-gray-700 rounded-md hover:bg-gray-800">
+                                                    Экспортировать
                                                 </button>
                                             </>
                                         )}
