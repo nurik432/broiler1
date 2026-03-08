@@ -125,10 +125,14 @@ function BatchesPage() {
 
         // 2. Если архивируем — увольняем всех сотрудников этой партии
         if (!newStatus) {
-            const { error: employeesError } = await supabase
-                .from('employees')
-                .update({ is_active: false })
-                .eq('batch_id', batchId);
+            const today = new Date().toISOString().slice(0, 10);
+const { error: employeesError } = await supabase
+    .from('employees')
+    .update({
+        is_active: false,
+        end_date: today  // <-- дата увольнения
+    })
+    .eq('batch_id', batchId);
 
             if (employeesError) {
                 console.error('Ошибка при обновлении сотрудников:', employeesError);

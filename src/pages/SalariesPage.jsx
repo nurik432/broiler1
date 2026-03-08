@@ -535,21 +535,30 @@ function SalariesPage() {
                                     {selectedEmployee.position && (
                                         <p className="text-sm text-gray-500">{selectedEmployee.position}</p>
                                     )}
-                                    {selectedEmployee.start_date && (
-                                        <p className="text-sm text-gray-500">
-                                            На работе с {new Date(selectedEmployee.start_date).toLocaleDateString()}
-                                        </p>
-                                    )}
+                                    <div className="flex gap-4 text-sm text-gray-500 mt-1">
+                                        {selectedEmployee.start_date && (
+                                            <p>📅 Принят: <span className="font-medium">
+            {new Date(selectedEmployee.start_date).toLocaleDateString()}
+        </span></p>
+                                        )}
+                                        {selectedEmployee.end_date && (
+                                            <p>🔴 Уволен: <span className="font-medium text-red-600">
+            {new Date(selectedEmployee.end_date).toLocaleDateString()}
+        </span></p>
+                                        )}
+                                    </div>
                                     {/* Информация о партии сотрудника */}
                                     {employeeBatch && (
-                                        <div className={`mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${
-                                            employeeBatch.is_active
-                                                ? 'bg-green-100 text-green-800'
-                                                : 'bg-red-100 text-red-700'
-                                        }`}>
+                                        <div
+                                            className={`mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${
+                                                employeeBatch.is_active
+                                                    ? 'bg-green-100 text-green-800'
+                                                    : 'bg-red-100 text-red-700'
+                                            }`}>
                                             <span>{employeeBatch.is_active ? '🟢' : '🔴'}</span>
                                             <span>Партия: {employeeBatch.batch_name}</span>
-                                            {!employeeBatch.is_active && <span className="text-xs">(архив — сотрудник уволен)</span>}
+                                            {!employeeBatch.is_active &&
+                                                <span className="text-xs">(архив — сотрудник уволен)</span>}
                                         </div>
                                     )}
                                 </div>
