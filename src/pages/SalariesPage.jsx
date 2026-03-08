@@ -10,12 +10,14 @@ function SalariesPage() {
     const [loading, setLoading] = useState(true);
     const [loadingSalaries, setLoadingSalaries] = useState(false);
     const [activeBatches, setActiveBatches] = useState([]);
-    const [showArchived, setShowArchived] = useState(false);
+    const [showArchivedEmployees, setShowArchivedEmployees] = useState(false);
+    const [showArchivedPayments, setShowArchivedPayments] = useState(false);
 
     // Состояния для добавления сотрудника
     const [newName, setNewName] = useState('');
     const [newPosition, setNewPosition] = useState('');
     const [newStartDate, setNewStartDate] = useState(new Date().toISOString().slice(0, 10));
+    const [newBatchId, setNewBatchId] = useState('');
     const [isAddingEmployee, setIsAddingEmployee] = useState(false);
 
     // Состояния для редактирования сотрудника
@@ -23,6 +25,7 @@ function SalariesPage() {
     const [editName, setEditName] = useState('');
     const [editPosition, setEditPosition] = useState('');
     const [editStartDate, setEditStartDate] = useState('');
+    const [editBatchId, setEditBatchId] = useState('');
     const [isSavingEdit, setIsSavingEdit] = useState(false);
 
     // Состояния для удаления сотрудника
@@ -34,7 +37,6 @@ function SalariesPage() {
     const [editPaymentDate, setEditPaymentDate] = useState('');
     const [editPaymentAmount, setEditPaymentAmount] = useState('');
     const [editPaymentType, setEditPaymentType] = useState('аванс');
-    const [editPaymentBatchId, setEditPaymentBatchId] = useState('');
     const [isSavingPayment, setIsSavingPayment] = useState(false);
 
     // Состояния для удаления выплаты
@@ -44,11 +46,21 @@ function SalariesPage() {
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
     const [paymentAmount, setPaymentAmount] = useState('');
     const [paymentType, setPaymentType] = useState('аванс');
-    const [selectedBatchId, setSelectedBatchId] = useState('');
     const [isAddingPayment, setIsAddingPayment] = useState(false);
 
+    // Загрузка сотрудников вместе с данными о партии
     const fetchEmployees = async () => {
-        const { data, error } = await supabase.from('employees').select('*').order('full_name');
+        const { data, error } = await supabase
+            .from('employees')
+            .select(`
+                *,
+                broiler_batches (
+                    id,
+                    batch_name,
+                    is_active
+                )
+            `)
+            .order('full_name');
         if (error) console.error('Ошибка загрузки сотрудников:', error);
         else setEmployees(data);
     };
@@ -73,17 +85,11 @@ function SalariesPage() {
             const fetchSalaries = async () => {
                 setLoadingSalaries(true);
 
-                // Сначала попробуем через RPC функцию
                 const { data: rpcData, error: rpcError } = await supabase.rpc('get_salaries_by_employee', {
                     employee_uuid: selectedEmployee.id
                 });
 
-                console.log('RPC Response:', { rpcData, rpcError });
-
                 if (rpcError) {
-                    console.error('Ошибка RPC, пробуем прямой запрос:', rpcError);
-
-                    // Если RPC не работает, используем прямой запрос
                     const { data, error } = await supabase
                         .from('salaries')
                         .select(`
@@ -96,23 +102,18 @@ function SalariesPage() {
                         .eq('employee_id', selectedEmployee.id)
                         .order('payment_date', { ascending: false });
 
-                    console.log('Direct Query Response:', { data, error });
-
                     if (error) {
                         console.error('Ошибка загрузки выплат:', error);
                         setAllSalaries([]);
                     } else {
-                        // Преобразуем данные в нужный формат
                         const formattedData = (data || []).map(salary => ({
                             ...salary,
                             batch_name: salary.broiler_batches?.batch_name || null,
-                            batch_is_active: salary.broiler_batches?.is_active || false
+                            batch_is_active: salary.broiler_batches?.is_active ?? true
                         }));
-                        console.log('Formatted Data:', formattedData);
                         setAllSalaries(formattedData);
                     }
                 } else {
-                    console.log('RPC успешно, данные:', rpcData);
                     setAllSalaries(rpcData || []);
                 }
                 setLoadingSalaries(false);
@@ -123,47 +124,42 @@ function SalariesPage() {
         }
     }, [selectedEmployee]);
 
-    // Фильтрация выплат с учетом даты начала работы
+    // Фильтрация сотрудников: активные = работают в активной партии
+    const filteredEmployees = useMemo(() => {
+        return employees.filter(emp => {
+            const batchIsActive = emp.broiler_batches?.is_active;
+            const empIsActive = emp.is_active !== false; // поддержка поля is_active если есть
+
+            if (showArchivedEmployees) return true;
+
+            // Показываем сотрудника если и он активен, и его партия активна
+            return empIsActive && (batchIsActive === true || batchIsActive === undefined);
+        });
+    }, [employees, showArchivedEmployees]);
+
+    // Фильтрация выплат
     const filteredSalaries = useMemo(() => {
         return allSalaries.filter(salary => {
-            // Фильтр по архивным партиям
-            if (!showArchived && salary.batch_id && salary.batch_is_active === false) {
+            if (!showArchivedPayments && salary.batch_id && salary.batch_is_active === false) {
                 return false;
             }
-
-            // Фильтр по дате начала работы
             if (selectedEmployee?.start_date) {
                 const salaryDate = new Date(salary.payment_date);
                 const startDate = new Date(selectedEmployee.start_date);
-                if (salaryDate < startDate) {
-                    return false;
-                }
+                if (salaryDate < startDate) return false;
             }
-
             return true;
         });
-    }, [allSalaries, showArchived, selectedEmployee]);
+    }, [allSalaries, showArchivedPayments, selectedEmployee]);
 
     // Расчет итогов
     const salaryTotals = useMemo(() => {
-        const totals = {
-            totalAdvance: 0,
-            totalSalary: 0,
-            totalAll: 0,
-            byBatch: {}
-        };
-
+        const totals = { totalAdvance: 0, totalSalary: 0, totalAll: 0, byBatch: {} };
         filteredSalaries.forEach(salary => {
             const amount = Number(salary.amount) || 0;
             totals.totalAll += amount;
-
-            if (salary.payment_type === 'аванс') {
-                totals.totalAdvance += amount;
-            } else if (salary.payment_type === 'зарплата') {
-                totals.totalSalary += amount;
-            }
-
-            // Группировка по партиям
+            if (salary.payment_type === 'аванс') totals.totalAdvance += amount;
+            else if (salary.payment_type === 'зарплата') totals.totalSalary += amount;
             if (salary.batch_id && salary.batch_name) {
                 if (!totals.byBatch[salary.batch_id]) {
                     totals.byBatch[salary.batch_id] = {
@@ -175,18 +171,23 @@ function SalariesPage() {
                 totals.byBatch[salary.batch_id].total += amount;
             }
         });
-
         return totals;
     }, [filteredSalaries]);
 
     const handleAddEmployee = async (e) => {
         e.preventDefault();
+        if (!newBatchId) {
+            alert('Выберите партию для привязки сотрудника');
+            return;
+        }
         setIsAddingEmployee(true);
         const { data: { user } } = await supabase.auth.getUser();
         const { error } = await supabase.from('employees').insert([{
             full_name: newName,
             position: newPosition,
             start_date: newStartDate,
+            batch_id: newBatchId,
+            is_active: true,
             user_id: user.id
         }]);
         if (error) {
@@ -195,6 +196,7 @@ function SalariesPage() {
             setNewName('');
             setNewPosition('');
             setNewStartDate(new Date().toISOString().slice(0, 10));
+            setNewBatchId('');
             await fetchEmployees();
         }
         setIsAddingEmployee(false);
@@ -205,28 +207,27 @@ function SalariesPage() {
             setEditName(selectedEmployee.full_name);
             setEditPosition(selectedEmployee.position || '');
             setEditStartDate(selectedEmployee.start_date || new Date().toISOString().slice(0, 10));
+            setEditBatchId(selectedEmployee.batch_id || '');
             setIsEditingEmployee(true);
         }
     };
 
     const handleCancelEdit = () => {
         setIsEditingEmployee(false);
-        setEditName('');
-        setEditPosition('');
-        setEditStartDate('');
+        setEditName(''); setEditPosition(''); setEditStartDate(''); setEditBatchId('');
     };
 
     const handleSaveEdit = async (e) => {
         e.preventDefault();
         if (!selectedEmployee) return;
-
         setIsSavingEdit(true);
         const { error } = await supabase
             .from('employees')
             .update({
                 full_name: editName,
                 position: editPosition,
-                start_date: editStartDate
+                start_date: editStartDate,
+                batch_id: editBatchId || null
             })
             .eq('id', selectedEmployee.id);
 
@@ -234,12 +235,13 @@ function SalariesPage() {
             alert('Ошибка при сохранении: ' + error.message);
         } else {
             await fetchEmployees();
-            setSelectedEmployee({
-                ...selectedEmployee,
+            setSelectedEmployee(prev => ({
+                ...prev,
                 full_name: editName,
                 position: editPosition,
-                start_date: editStartDate
-            });
+                start_date: editStartDate,
+                batch_id: editBatchId || null
+            }));
             setIsEditingEmployee(false);
         }
         setIsSavingEdit(false);
@@ -247,10 +249,8 @@ function SalariesPage() {
 
     const handleDeleteEmployee = async () => {
         if (!selectedEmployee) return;
-
         setIsDeleting(true);
 
-        // Сначала удаляем все выплаты сотрудника
         const { error: salariesError } = await supabase
             .from('salaries')
             .delete()
@@ -262,7 +262,6 @@ function SalariesPage() {
             return;
         }
 
-        // Затем удаляем самого сотрудника
         const { error: employeeError } = await supabase
             .from('employees')
             .delete()
@@ -276,7 +275,6 @@ function SalariesPage() {
             setShowDeleteConfirm(false);
             setIsEditingEmployee(false);
         }
-
         setIsDeleting(false);
     };
 
@@ -285,86 +283,58 @@ function SalariesPage() {
         setEditPaymentDate(payment.payment_date);
         setEditPaymentAmount(payment.amount);
         setEditPaymentType(payment.payment_type);
-        setEditPaymentBatchId(payment.batch_id || '');
     };
 
     const handleCancelEditPayment = () => {
         setEditingPayment(null);
-        setEditPaymentDate('');
-        setEditPaymentAmount('');
-        setEditPaymentType('аванс');
-        setEditPaymentBatchId('');
+        setEditPaymentDate(''); setEditPaymentAmount(''); setEditPaymentType('аванс');
     };
 
     const handleSavePayment = async (paymentId) => {
         setIsSavingPayment(true);
-
         const { error } = await supabase
             .from('salaries')
             .update({
                 payment_date: editPaymentDate,
                 amount: Number(editPaymentAmount),
                 payment_type: editPaymentType,
-                batch_id: editPaymentBatchId || null
+                // batch_id остаётся неизменным при редактировании
             })
             .eq('id', paymentId);
 
         if (error) {
             alert('Ошибка при сохранении: ' + error.message);
         } else {
-            // Перезагружаем выплаты
             await reloadSalaries();
             setEditingPayment(null);
         }
-
         setIsSavingPayment(false);
     };
 
     const handleDeletePayment = async (paymentId) => {
-        if (!confirm('Вы уверены, что хотите удалить эту выплату?')) {
-            return;
-        }
-
+        if (!confirm('Вы уверены, что хотите удалить эту выплату?')) return;
         setDeletingPaymentId(paymentId);
-
-        const { error } = await supabase
-            .from('salaries')
-            .delete()
-            .eq('id', paymentId);
-
-        if (error) {
-            alert('Ошибка при удалении: ' + error.message);
-        } else {
-            await reloadSalaries();
-        }
-
+        const { error } = await supabase.from('salaries').delete().eq('id', paymentId);
+        if (error) alert('Ошибка при удалении: ' + error.message);
+        else await reloadSalaries();
         setDeletingPaymentId(null);
     };
 
     const reloadSalaries = async () => {
         if (!selectedEmployee) return;
-
         const { data: rpcData, error: rpcError } = await supabase.rpc('get_salaries_by_employee', {
             employee_uuid: selectedEmployee.id
         });
-
         if (rpcError) {
             const { data } = await supabase
                 .from('salaries')
-                .select(`
-                    *,
-                    broiler_batches (
-                        batch_name,
-                        is_active
-                    )
-                `)
+                .select(`*, broiler_batches(batch_name, is_active)`)
                 .eq('employee_id', selectedEmployee.id)
                 .order('payment_date', { ascending: false });
-
             const formattedData = (data || []).map(salary => ({
                 ...salary,
                 batch_name: salary.broiler_batches?.batch_name || null,
-                batch_is_active: salary.broiler_batches?.is_active || false
+                batch_is_active: salary.broiler_batches?.is_active ?? true
             }));
             setAllSalaries(formattedData);
         } else {
@@ -376,7 +346,7 @@ function SalariesPage() {
         e.preventDefault();
         if (!selectedEmployee) return;
 
-        // Проверка даты выплаты относительно даты начала работы
+        // Проверка даты
         if (selectedEmployee.start_date) {
             const payDate = new Date(paymentDate);
             const startDate = new Date(selectedEmployee.start_date);
@@ -388,41 +358,45 @@ function SalariesPage() {
 
         setIsAddingPayment(true);
         const { data: { user } } = await supabase.auth.getUser();
+
+        // Автоматически привязываем выплату к партии сотрудника
+        const batchId = selectedEmployee.batch_id || null;
+
         const { error } = await supabase.from('salaries').insert([{
             employee_id: selectedEmployee.id,
             amount: Number(paymentAmount),
             payment_type: paymentType,
             payment_date: paymentDate,
             user_id: user.id,
-            batch_id: selectedBatchId || null
+            batch_id: batchId  // <-- автоматически из партии сотрудника
         }]);
 
         if (error) {
             alert('Ошибка: ' + error.message);
         } else {
             setPaymentAmount('');
-            setSelectedBatchId('');
-
-            // Перезагружаем выплаты
             await reloadSalaries();
         }
         setIsAddingPayment(false);
     };
 
-    const formatCurrency = (amount) => {
-        return new Intl.NumberFormat('ru-RU', {
-            style: 'currency',
-            currency: 'TJS'
-        }).format(amount);
-    };
+    const formatCurrency = (amount) => new Intl.NumberFormat('ru-RU', {
+        style: 'currency', currency: 'TJS'
+    }).format(amount);
+
+    // Получить партию сотрудника для отображения
+    const employeeBatch = selectedEmployee?.broiler_batches;
 
     return (
         <div>
             <h1 className="text-3xl font-bold text-gray-800 mb-6">Сотрудники и зарплаты</h1>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+
+                {/* ===== ЛЕВАЯ КОЛОНКА ===== */}
                 <div className="md:col-span-1">
+                    {/* Форма добавления сотрудника */}
                     <div className="bg-white p-6 rounded-lg shadow-md mb-6">
-                        <h2 className="text-2xl font-semibold mb-4">Добавить сотрудника</h2>
+                        <h2 className="text-2xl font-semibold mb-4">Принять на работу</h2>
                         <form onSubmit={handleAddEmployee} className="space-y-4">
                             <div>
                                 <label className="block text-sm font-medium">ФИО</label>
@@ -453,61 +427,133 @@ function SalariesPage() {
                                     className="mt-1 w-full p-2 border rounded-md"
                                 />
                             </div>
+                            <div>
+                                <label className="block text-sm font-medium text-indigo-700 font-semibold">
+                                    Партия *
+                                </label>
+                                <select
+                                    value={newBatchId}
+                                    onChange={e => setNewBatchId(e.target.value)}
+                                    required
+                                    className="mt-1 w-full p-2 border-2 border-indigo-300 rounded-md bg-white focus:border-indigo-500"
+                                >
+                                    <option value="">— Выберите партию —</option>
+                                    {activeBatches.map(b => (
+                                        <option key={b.id} value={b.id}>{b.batch_name}</option>
+                                    ))}
+                                </select>
+                                {activeBatches.length === 0 && (
+                                    <p className="text-xs text-red-500 mt-1">Нет активных партий. Сначала создайте партию.</p>
+                                )}
+                            </div>
                             <button
                                 type="submit"
-                                disabled={isAddingEmployee}
+                                disabled={isAddingEmployee || !newBatchId}
                                 className="w-full bg-indigo-600 text-white p-2 rounded-md hover:bg-indigo-700 disabled:bg-gray-400"
                             >
-                                {isAddingEmployee ? 'Добавление...' : 'Добавить'}
+                                {isAddingEmployee ? 'Добавление...' : 'Принять на работу'}
                             </button>
                         </form>
                     </div>
 
+                    {/* Список сотрудников */}
                     <div className="bg-white p-6 rounded-lg shadow-md">
-                        <h2 className="text-2xl font-semibold mb-4">Список сотрудников</h2>
-                        {loading ? <p>Загрузка...</p> :
-                        <ul className="space-y-2">
-                            {employees.map(emp => (
-                                <li
-                                    key={emp.id}
-                                    onClick={() => {
-                                        setSelectedEmployee(emp);
-                                        setIsEditingEmployee(false);
-                                    }}
-                                    className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                                        selectedEmployee?.id === emp.id 
-                                            ? 'bg-indigo-100 border-2 border-indigo-500' 
-                                            : 'hover:bg-gray-100'
-                                    }`}
-                                >
-                                    <p className="font-bold">{emp.full_name}</p>
-                                    <p className="text-sm text-gray-500">{emp.position}</p>
-                                    {emp.start_date && (
-                                        <p className="text-xs text-gray-400 mt-1">
-                                            С {new Date(emp.start_date).toLocaleDateString()}
-                                        </p>
-                                    )}
-                                </li>
-                            ))}
-                        </ul>}
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-2xl font-semibold">Сотрудники</h2>
+                            <label className="flex items-center text-xs text-gray-500 cursor-pointer gap-1">
+                                <input
+                                    type="checkbox"
+                                    checked={showArchivedEmployees}
+                                    onChange={() => setShowArchivedEmployees(!showArchivedEmployees)}
+                                    className="rounded border-gray-300"
+                                />
+                                <span>Уволенные</span>
+                            </label>
+                        </div>
+                        {loading ? <p>Загрузка...</p> : (
+                            <ul className="space-y-2">
+                                {filteredEmployees.map(emp => {
+                                    const batch = emp.broiler_batches;
+                                    const isArchived = emp.is_active === false || batch?.is_active === false;
+                                    return (
+                                        <li
+                                            key={emp.id}
+                                            onClick={() => {
+                                                setSelectedEmployee(emp);
+                                                setIsEditingEmployee(false);
+                                            }}
+                                            className={`p-3 rounded-lg cursor-pointer transition-colors border ${
+                                                selectedEmployee?.id === emp.id
+                                                    ? 'bg-indigo-100 border-indigo-500 border-2'
+                                                    : isArchived
+                                                        ? 'bg-gray-50 border-gray-200 opacity-70 hover:bg-gray-100'
+                                                        : 'border-transparent hover:bg-gray-100'
+                                            }`}
+                                        >
+                                            <div className="flex justify-between items-start">
+                                                <p className="font-bold">{emp.full_name}</p>
+                                                {isArchived && (
+                                                    <span className="text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full">уволен</span>
+                                                )}
+                                            </div>
+                                            <p className="text-sm text-gray-500">{emp.position}</p>
+                                            {batch && (
+                                                <p className={`text-xs mt-1 px-2 py-0.5 rounded-full inline-block ${
+                                                    batch.is_active
+                                                        ? 'bg-purple-100 text-purple-700'
+                                                        : 'bg-gray-200 text-gray-500'
+                                                }`}>
+                                                    {batch.batch_name} {!batch.is_active && '(архив)'}
+                                                </p>
+                                            )}
+                                            {emp.start_date && (
+                                                <p className="text-xs text-gray-400 mt-1">
+                                                    С {new Date(emp.start_date).toLocaleDateString()}
+                                                </p>
+                                            )}
+                                        </li>
+                                    );
+                                })}
+                                {filteredEmployees.length === 0 && (
+                                    <p className="text-sm text-gray-400 text-center py-4">Нет сотрудников</p>
+                                )}
+                            </ul>
+                        )}
                     </div>
                 </div>
 
+                {/* ===== ПРАВАЯ КОЛОНКА ===== */}
                 <div className="md:col-span-2">
                     {selectedEmployee ? (
                         <div className="bg-white p-6 rounded-lg shadow-md">
-                            <div className="flex flex-wrap justify-between items-center mb-4 gap-4">
+                            {/* Заголовок */}
+                            <div className="flex flex-wrap justify-between items-start mb-4 gap-4">
                                 <div>
                                     <h2 className="text-2xl font-semibold">
-                                        Выплаты для: <span className="text-indigo-600">{selectedEmployee.full_name}</span>
+                                        <span className="text-indigo-600">{selectedEmployee.full_name}</span>
                                     </h2>
+                                    {selectedEmployee.position && (
+                                        <p className="text-sm text-gray-500">{selectedEmployee.position}</p>
+                                    )}
                                     {selectedEmployee.start_date && (
-                                        <p className="text-sm text-gray-500 mt-1">
-                                            Дата начала работы: {new Date(selectedEmployee.start_date).toLocaleDateString()}
+                                        <p className="text-sm text-gray-500">
+                                            На работе с {new Date(selectedEmployee.start_date).toLocaleDateString()}
                                         </p>
                                     )}
+                                    {/* Информация о партии сотрудника */}
+                                    {employeeBatch && (
+                                        <div className={`mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${
+                                            employeeBatch.is_active
+                                                ? 'bg-green-100 text-green-800'
+                                                : 'bg-red-100 text-red-700'
+                                        }`}>
+                                            <span>{employeeBatch.is_active ? '🟢' : '🔴'}</span>
+                                            <span>Партия: {employeeBatch.batch_name}</span>
+                                            {!employeeBatch.is_active && <span className="text-xs">(архив — сотрудник уволен)</span>}
+                                        </div>
+                                    )}
                                 </div>
-                                <div className="flex gap-2">
+                                <div className="flex flex-wrap gap-2">
                                     <button
                                         onClick={handleStartEdit}
                                         className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
@@ -523,14 +569,24 @@ function SalariesPage() {
                                     <label className="flex items-center text-sm text-gray-600 cursor-pointer">
                                         <input
                                             type="checkbox"
-                                            checked={showArchived}
-                                            onChange={() => setShowArchived(!showArchived)}
-                                            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            checked={showArchivedPayments}
+                                            onChange={() => setShowArchivedPayments(!showArchivedPayments)}
+                                            className="h-4 w-4 rounded border-gray-300 text-indigo-600"
                                         />
-                                        <span className="ml-2">Показать архивные</span>
+                                        <span className="ml-2">Архивные выплаты</span>
                                     </label>
                                 </div>
                             </div>
+
+                            {/* Предупреждение если партия архивирована */}
+                            {employeeBatch && !employeeBatch.is_active && (
+                                <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                                    <p className="text-sm text-orange-800">
+                                        ⚠️ Партия <strong>{employeeBatch.batch_name}</strong> завершена.
+                                        Сотрудник считается уволенным. Добавление новых выплат невозможно.
+                                    </p>
+                                </div>
+                            )}
 
                             {/* Модальное окно подтверждения удаления */}
                             {showDeleteConfirm && (
@@ -547,23 +603,19 @@ function SalariesPage() {
                                                 <p className="text-sm text-gray-600 mt-1">Это действие необратимо</p>
                                             </div>
                                         </div>
-
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
-                                            <p className="text-sm text-gray-700">
-                                                <strong>Внимание!</strong> Будут удалены:
-                                            </p>
+                                            <p className="text-sm text-gray-700"><strong>Будут удалены:</strong></p>
                                             <ul className="text-sm text-gray-700 mt-2 ml-4 list-disc">
                                                 <li>Сотрудник: <strong>{selectedEmployee.full_name}</strong></li>
-                                                <li>Все выплаты этого сотрудника ({filteredSalaries.length} записей)</li>
-                                                <li>Общая сумма выплат: <strong>{formatCurrency(salaryTotals.totalAll)}</strong></li>
+                                                <li>Все выплаты ({filteredSalaries.length} записей)</li>
+                                                <li>Сумма: <strong>{formatCurrency(salaryTotals.totalAll)}</strong></li>
                                             </ul>
                                         </div>
-
                                         <div className="flex gap-3">
                                             <button
                                                 onClick={() => setShowDeleteConfirm(false)}
                                                 disabled={isDeleting}
-                                                className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 disabled:opacity-50"
+                                                className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
                                             >
                                                 Отмена
                                             </button>
@@ -579,6 +631,7 @@ function SalariesPage() {
                                 </div>
                             )}
 
+                            {/* Форма редактирования сотрудника */}
                             {isEditingEmployee ? (
                                 <form onSubmit={handleSaveEdit} className="mb-6 pb-6 border-b bg-blue-50 p-4 rounded-lg">
                                     <h3 className="font-semibold mb-3 text-lg">Редактирование сотрудника</h3>
@@ -612,6 +665,19 @@ function SalariesPage() {
                                                 className="w-full p-2 border rounded mt-1"
                                             />
                                         </div>
+                                        <div>
+                                            <label className="text-sm font-medium text-indigo-700">Партия</label>
+                                            <select
+                                                value={editBatchId}
+                                                onChange={e => setEditBatchId(e.target.value)}
+                                                className="w-full p-2 border-2 border-indigo-200 rounded bg-white mt-1"
+                                            >
+                                                <option value="">— Без партии —</option>
+                                                {activeBatches.map(b => (
+                                                    <option key={b.id} value={b.id}>{b.batch_name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
                                     </div>
                                     <div className="flex gap-2">
                                         <button
@@ -631,62 +697,59 @@ function SalariesPage() {
                                     </div>
                                 </form>
                             ) : (
-                                <form onSubmit={handleAddPayment} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end mb-6 pb-6 border-b">
-                                    <div>
-                                        <label className="text-sm font-medium">Дата</label>
-                                        <input
-                                            type="date"
-                                            value={paymentDate}
-                                            onChange={e => setPaymentDate(e.target.value)}
-                                            required
-                                            className="w-full p-2 border rounded mt-1"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-sm font-medium">Сумма</label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            value={paymentAmount}
-                                            onChange={e => setPaymentAmount(e.target.value)}
-                                            required
-                                            className="w-full p-2 border rounded mt-1"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-sm font-medium">Тип</label>
-                                        <select
-                                            value={paymentType}
-                                            onChange={e => setPaymentType(e.target.value)}
-                                            className="w-full p-2 border rounded bg-white mt-1"
+                                /* Форма добавления выплаты — только если партия активна */
+                                employeeBatch?.is_active !== false && (
+                                    <form onSubmit={handleAddPayment} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end mb-6 pb-6 border-b">
+                                        <div>
+                                            <label className="text-sm font-medium">Дата</label>
+                                            <input
+                                                type="date"
+                                                value={paymentDate}
+                                                onChange={e => setPaymentDate(e.target.value)}
+                                                required
+                                                className="w-full p-2 border rounded mt-1"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium">Сумма</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                value={paymentAmount}
+                                                onChange={e => setPaymentAmount(e.target.value)}
+                                                required
+                                                className="w-full p-2 border rounded mt-1"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium">Тип</label>
+                                            <select
+                                                value={paymentType}
+                                                onChange={e => setPaymentType(e.target.value)}
+                                                className="w-full p-2 border rounded bg-white mt-1"
+                                            >
+                                                <option value="аванс">Аванс</option>
+                                                <option value="зарплата">Зарплата</option>
+                                            </select>
+                                        </div>
+                                        {/* Показываем к какой партии привяжется выплата */}
+                                        {employeeBatch && (
+                                            <div className="sm:col-span-3">
+                                                <p className="text-xs text-gray-500">
+                                                    💡 Выплата автоматически привяжется к партии:{' '}
+                                                    <span className="font-semibold text-purple-700">{employeeBatch.batch_name}</span>
+                                                </p>
+                                            </div>
+                                        )}
+                                        <button
+                                            type="submit"
+                                            disabled={isAddingPayment}
+                                            className="bg-green-600 text-white p-2 rounded hover:bg-green-700 disabled:bg-gray-400 sm:col-span-3"
                                         >
-                                            <option value="аванс">Аванс</option>
-                                            <option value="зарплата">Зарплата</option>
-                                        </select>
-                                    </div>
-                                    <div className="sm:col-span-2">
-                                        <label className="text-sm font-medium">Привязать к партии (необязательно)</label>
-                                        <select
-                                            value={selectedBatchId}
-                                            onChange={e => setSelectedBatchId(e.target.value)}
-                                            className="w-full p-2 border rounded bg-white mt-1"
-                                        >
-                                            <option value="">-- Не привязывать --</option>
-                                            {activeBatches.map(b => (
-                                                <option key={b.id} value={b.id}>
-                                                    {b.batch_name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    <button
-                                        type="submit"
-                                        disabled={isAddingPayment}
-                                        className="bg-green-600 text-white p-2 rounded hover:bg-green-700 disabled:bg-gray-400"
-                                    >
-                                        {isAddingPayment ? 'Добавление...' : 'Добавить выплату'}
-                                    </button>
-                                </form>
+                                            {isAddingPayment ? 'Добавление...' : 'Добавить выплату'}
+                                        </button>
+                                    </form>
+                                )
                             )}
 
                             {/* Итоги */}
@@ -702,11 +765,10 @@ function SalariesPage() {
                                         <p className="text-xl font-bold text-green-600">{formatCurrency(salaryTotals.totalSalary)}</p>
                                     </div>
                                     <div className="bg-white p-3 rounded-md shadow-sm">
-                                        <p className="text-sm text-gray-600">Всего выплачено</p>
+                                        <p className="text-sm text-gray-600">Всего</p>
                                         <p className="text-xl font-bold text-indigo-600">{formatCurrency(salaryTotals.totalAll)}</p>
                                     </div>
                                 </div>
-
                                 {Object.keys(salaryTotals.byBatch).length > 0 && (
                                     <div className="mt-4">
                                         <p className="text-sm font-medium text-gray-700 mb-2">По партиям:</p>
@@ -724,11 +786,12 @@ function SalariesPage() {
                                 )}
                             </div>
 
+                            {/* Таблица выплат */}
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead className="text-left text-gray-500 border-b-2">
                                         <tr>
-                                            <th className="py-2">Дата/Время</th>
+                                            <th className="py-2">Дата</th>
                                             <th className="py-2">Тип</th>
                                             <th className="py-2">Партия</th>
                                             <th className="py-2 text-right">Сумма</th>
@@ -737,11 +800,10 @@ function SalariesPage() {
                                     </thead>
                                     <tbody>
                                         {loadingSalaries ? (
-                                            <tr><td colSpan="5" className="text-center py-4">Загрузка выплат...</td></tr>
+                                            <tr><td colSpan="5" className="text-center py-4">Загрузка...</td></tr>
                                         ) : filteredSalaries.length > 0 ? (
                                             filteredSalaries.map(sal => (
                                                 editingPayment === sal.id ? (
-                                                    // Режим редактирования
                                                     <tr key={sal.id} className="border-b bg-blue-50">
                                                         <td className="py-3">
                                                             <input
@@ -761,17 +823,9 @@ function SalariesPage() {
                                                                 <option value="зарплата">Зарплата</option>
                                                             </select>
                                                         </td>
-                                                        <td className="py-3">
-                                                            <select
-                                                                value={editPaymentBatchId}
-                                                                onChange={e => setEditPaymentBatchId(e.target.value)}
-                                                                className="w-full p-1 border rounded text-sm bg-white"
-                                                            >
-                                                                <option value="">-- Нет --</option>
-                                                                {activeBatches.map(b => (
-                                                                    <option key={b.id} value={b.id}>{b.batch_name}</option>
-                                                                ))}
-                                                            </select>
+                                                        <td className="py-3 text-xs text-gray-500">
+                                                            {sal.batch_name || '–'}<br/>
+                                                            <span className="text-gray-400">(не меняется)</span>
                                                         </td>
                                                         <td className="py-3">
                                                             <input
@@ -789,23 +843,18 @@ function SalariesPage() {
                                                                     disabled={isSavingPayment}
                                                                     className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:bg-gray-400"
                                                                     title="Сохранить"
-                                                                >
-                                                                    ✓
-                                                                </button>
+                                                                >✓</button>
                                                                 <button
                                                                     onClick={handleCancelEditPayment}
                                                                     disabled={isSavingPayment}
-                                                                    className="px-2 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600 disabled:bg-gray-400"
+                                                                    className="px-2 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600"
                                                                     title="Отмена"
-                                                                >
-                                                                    ✕
-                                                                </button>
+                                                                >✕</button>
                                                             </div>
                                                         </td>
                                                     </tr>
                                                 ) : (
-                                                    // Режим просмотра
-                                                    <tr key={sal.id} className="border-b hover:bg-gray-50">
+                                                    <tr key={sal.id} className={`border-b hover:bg-gray-50 ${sal.batch_is_active === false ? 'opacity-60' : ''}`}>
                                                         <td className="py-3">
                                                             <p className="font-medium">{new Date(sal.payment_date).toLocaleDateString()}</p>
                                                             {sal.created_at && (
@@ -816,8 +865,8 @@ function SalariesPage() {
                                                         </td>
                                                         <td className="py-3">
                                                             <span className={`inline-block px-2 py-1 rounded-full text-xs font-semibold ${
-                                                                sal.payment_type === 'аванс' 
-                                                                    ? 'bg-blue-100 text-blue-800' 
+                                                                sal.payment_type === 'аванс'
+                                                                    ? 'bg-blue-100 text-blue-800'
                                                                     : 'bg-green-100 text-green-800'
                                                             }`}>
                                                                 {sal.payment_type}
@@ -826,11 +875,12 @@ function SalariesPage() {
                                                         <td className="py-3">
                                                             {sal.batch_name ? (
                                                                 <span className={`text-xs rounded-full px-2 py-1 ${
-                                                                    sal.batch_is_active 
-                                                                        ? 'bg-purple-100 text-purple-800' 
-                                                                        : 'bg-gray-200 text-gray-600'
+                                                                    sal.batch_is_active
+                                                                        ? 'bg-purple-100 text-purple-800'
+                                                                        : 'bg-gray-200 text-gray-500'
                                                                 }`}>
                                                                     {sal.batch_name}
+                                                                    {sal.batch_is_active === false && ' (архив)'}
                                                                 </span>
                                                             ) : '–'}
                                                         </td>
@@ -841,17 +891,13 @@ function SalariesPage() {
                                                                     onClick={() => handleStartEditPayment(sal)}
                                                                     className="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700"
                                                                     title="Редактировать"
-                                                                >
-                                                                    ✎
-                                                                </button>
+                                                                >✎</button>
                                                                 <button
                                                                     onClick={() => handleDeletePayment(sal.id)}
                                                                     disabled={deletingPaymentId === sal.id}
                                                                     className="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700 disabled:bg-gray-400"
                                                                     title="Удалить"
-                                                                >
-                                                                    {deletingPaymentId === sal.id ? '...' : '🗑'}
-                                                                </button>
+                                                                >{deletingPaymentId === sal.id ? '...' : '🗑'}</button>
                                                             </div>
                                                         </td>
                                                     </tr>
