@@ -506,11 +506,11 @@ function SalariesPage() {
                                                     {batch.batch_name} {!batch.is_active && '(архив)'}
                                                 </p>
                                             )}
-                                            {emp.start_date && (
-                                                <p className="text-xs text-gray-400 mt-1">
-                                                    С {new Date(emp.start_date).toLocaleDateString()}
-                                                </p>
-                                            )}
+                                            {emp.end_date && (
+    <p className="text-xs text-red-400">
+        По {new Date(emp.end_date).toLocaleDateString()}
+    </p>
+)}
                                         </li>
                                     );
                                 })}
