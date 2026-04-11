@@ -7,8 +7,8 @@ import {
 /**
  * Сравнить фактическое значение с нормой ROSS-308
  * @param {number} day   - день выращивания (age из Supabase)
- * @param {'weight'|'dailyFeed'|'temp'|'humidity'} field
- * @param {number|string} value - фактическое значение из поля формы
+ * @param {'weight'|'dailyFeed'|'waterNorm'|'temp'|'humidity'} field
+ * @param {number|string} value - фактическое значение (уже в единицах нормы: г, г, мл)
  * @returns {{ normLabel, deviation, percent, status: 'ok'|'warning'|'critical' } | null}
  */
 export function compareWithNorm(day, field, value) {
@@ -40,7 +40,7 @@ export function compareWithNorm(day, field, value) {
     };
   }
 
-  // Числовые поля (weight, dailyFeed)
+  // Числовые поля (weight, dailyFeed, waterNorm)
   const normValue = norm[field];
   if (!normValue) return null;
   const deviation = Math.round(num - normValue);
@@ -48,7 +48,11 @@ export function compareWithNorm(day, field, value) {
   const status    = percent <= DEVIATION_THRESHOLDS.ok      ? 'ok'
                   : percent <= DEVIATION_THRESHOLDS.warning ? 'warning'
                   : 'critical';
-  return { normLabel: String(normValue), deviation, percent, status };
+
+  // Единицы для отображения
+  const units = { weight: 'г', dailyFeed: 'г', waterNorm: 'мл' };
+  const unit = units[field] || '';
+  return { normLabel: `${normValue} ${unit}`, deviation, percent, status };
 }
 
 /**
@@ -88,11 +92,39 @@ export function forecastWeight(logs, targetDay = 42) {
     .sort((a, b) => a.age - b.age);
   if (withWeight.length < 2) return null;
 
-  const recent = withWeight.slice(-5); // последние 5 записей с массой
+  const recent = withWeight.slice(-5);
   const first  = recent[0];
   const last   = recent[recent.length - 1];
+  if (last.age === first.age) return null;
   const dailyGain = (last.weight - first.weight) / (last.age - first.age);
   const daysLeft  = targetDay - last.age;
   const forecastWeight = Math.round(last.weight + dailyGain * daysLeft);
   return { forecastWeight, dailyGain: Math.round(dailyGain) };
+}
+
+/**
+ * Рассчитать падёж по историческим партиям на указанный день
+ * @param {Array} historicalBatches - [{id, batch_name, initial_quantity}]
+ * @param {Array} historicalLogs    - [{batch_id, age, mortality}]
+ * @param {number} targetAge        - текущий возраст для сравнения
+ * @returns {Array<{batchName, totalDead, percent}>}
+ */
+export function calcHistoricalMortality(historicalBatches, historicalLogs, targetAge) {
+  if (!historicalBatches?.length || !historicalLogs?.length) return [];
+
+  return historicalBatches.map(batch => {
+    const batchLogs = historicalLogs.filter(
+      l => l.batch_id === batch.id && l.age <= targetAge
+    );
+    const totalDead = batchLogs.reduce((sum, r) => sum + (r.mortality || 0), 0);
+    const percent = batch.initial_quantity > 0
+      ? ((totalDead / batch.initial_quantity) * 100).toFixed(2)
+      : '0.00';
+    return {
+      batchName: batch.batch_name,
+      totalDead,
+      percent,
+      initialQuantity: batch.initial_quantity,
+    };
+  });
 }

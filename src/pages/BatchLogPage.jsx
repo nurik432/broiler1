@@ -1,40 +1,98 @@
 // src/pages/BatchLogPage.jsx
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import NormIndicator from '../components/NormIndicator';
 import DashboardNormFact from '../components/DashboardNormFact';
 import { compareWithNorm } from '../utils/normComparison';
-import { getWeekMortalityNorm } from '../constants/broilerStandards';
+import { getWeekMortalityNorm, FEED_BAG_WEIGHT_G } from '../constants/broilerStandards';
+
+// --- Утилита: поголовье на момент каждой записи ---
+function buildFlockSizeMap(logs, initialQuantity) {
+    const sortedAsc = [...logs].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+    let cumMort = 0;
+    const map = {};
+    for (const log of sortedAsc) {
+        map[log.id] = initialQuantity - cumMort; // поголовье до падежа этого дня
+        cumMort += log.mortality;
+    }
+    return map;
+}
 
 // --- КОМПОНЕНТЫ-ТАБЛИЦЫ ---
 const JournalTable = ({ logs, batch, medicines, fetchData }) => {
     const [editingId, setEditingId] = useState(null);
     const [editFormData, setEditFormData] = useState({});
+
+    const flockSizeMap = useMemo(
+        () => buildFlockSizeMap(logs, batch.initial_quantity),
+        [logs, batch.initial_quantity]
+    );
+
     const calculateAge = (startDate, currentDate) => {
         const start = new Date(startDate);
         const current = new Date(currentDate);
         return Math.ceil(Math.abs(current - start) / (1000 * 60 * 60 * 24));
     };
-    const handleEditClick = (log) => { setEditingId(log.id); setEditFormData({ log_date: log.log_date, mortality: log.mortality, water_consumption: log.water_consumption || '', medicine_id: log.medicine_id || '', dosage: log.dosage || '', weight: log.weight ?? '', daily_feed: log.daily_feed ?? '' }); };
+    const handleEditClick = (log) => {
+        setEditingId(log.id);
+        setEditFormData({
+            log_date: log.log_date,
+            mortality: log.mortality,
+            water_consumption: log.water_consumption || '',
+            medicine_id: log.medicine_id || '',
+            dosage: log.dosage || '',
+            weight: log.weight ?? '',
+            daily_feed: log.daily_feed ?? '',
+        });
+    };
     const handleUpdate = async (logId) => {
         const age = calculateAge(batch.start_date, editFormData.log_date);
-        const { error } = await supabase.from('daily_logs').update({ ...editFormData, age, mortality: Number(editFormData.mortality) || 0, water_consumption: Number(editFormData.water_consumption) || null, weight: editFormData.weight ? parseFloat(editFormData.weight) : null, daily_feed: editFormData.daily_feed ? parseFloat(editFormData.daily_feed) : null }).eq('id', logId);
+        const { error } = await supabase.from('daily_logs').update({
+            ...editFormData,
+            age,
+            mortality: Number(editFormData.mortality) || 0,
+            water_consumption: Number(editFormData.water_consumption) || null,
+            weight: editFormData.weight ? parseFloat(editFormData.weight) : null,
+            daily_feed: editFormData.daily_feed ? parseFloat(editFormData.daily_feed) : null,
+        }).eq('id', logId);
         if (error) { alert(error.message); }
         else { setEditingId(null); await fetchData(); }
     };
-    const handleDelete = async (logId) => { if (window.confirm("Удалить запись?")) { const { error } = await supabase.from('daily_logs').delete().eq('id', logId); if (error) { alert(error.message); } else { await fetchData(); } } };
+    const handleDelete = async (logId) => {
+        if (window.confirm("Удалить запись?")) {
+            const { error } = await supabase.from('daily_logs').delete().eq('id', logId);
+            if (error) { alert(error.message); } else { await fetchData(); }
+        }
+    };
+
+    // Расчёт на голову
+    const perHeadWater = (log) => {
+        const flock = flockSizeMap[log.id];
+        if (!flock || !log.water_consumption) return null;
+        return Math.round((log.water_consumption * 1000) / flock);
+    };
+    const perHeadFeed = (log) => {
+        const flock = flockSizeMap[log.id];
+        if (!flock || !log.daily_feed) return null;
+        return Math.round((log.daily_feed * FEED_BAG_WEIGHT_G) / flock);
+    };
 
     return (
         <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left text-gray-500 min-w-[900px]">
+            <table className="w-full text-sm text-left text-gray-500 min-w-[1000px]">
                 <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                     <tr>
-                        <th className="px-4 py-3">Дата / Время</th><th className="px-4 py-3">Возраст</th><th className="px-4 py-3">Падеж</th>
-                        <th className="px-4 py-3">Масса, г</th><th className="px-4 py-3">Корм, г</th>
-                        <th className="px-4 py-3">Лекарство</th><th className="px-4 py-3">Доза</th><th className="px-4 py-3">Вода, л</th>
-                        <th className="px-4 py-3 text-right">Действия</th>
+                        <th className="px-3 py-3">Дата / Время</th>
+                        <th className="px-3 py-3">Возр.</th>
+                        <th className="px-3 py-3">Падеж</th>
+                        <th className="px-3 py-3">Масса, г</th>
+                        <th className="px-3 py-3">Вода, л (мл/гол)</th>
+                        <th className="px-3 py-3">Корм, мешк. (г/гол)</th>
+                        <th className="px-3 py-3">Лекарство</th>
+                        <th className="px-3 py-3">Доза</th>
+                        <th className="px-3 py-3 text-right">Действия</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -43,26 +101,34 @@ const JournalTable = ({ logs, batch, medicines, fetchData }) => {
                             {editingId === log.id && batch.is_active ? (
                                 <>
                                     <td className="p-2"><input type="date" value={editFormData.log_date} onChange={e => setEditFormData({...editFormData, log_date: e.target.value})} className="p-1 border rounded w-full"/></td>
-                                    <td className="px-4 py-4">{calculateAge(batch.start_date, editFormData.log_date)}</td>
-                                    <td className="p-2"><input type="number" value={editFormData.mortality} onChange={e => setEditFormData({...editFormData, mortality: e.target.value})} className="p-1 border rounded w-20"/></td>
-                                    <td className="p-2"><input type="number" value={editFormData.weight} onChange={e => setEditFormData({...editFormData, weight: e.target.value})} placeholder="г" className="p-1 border rounded w-20"/></td>
-                                    <td className="p-2"><input type="number" value={editFormData.daily_feed} onChange={e => setEditFormData({...editFormData, daily_feed: e.target.value})} placeholder="г" className="p-1 border rounded w-20"/></td>
-                                    <td className="p-2"><select value={editFormData.medicine_id} onChange={e => setEditFormData({...editFormData, medicine_id: e.target.value})} className="p-1 border rounded w-full bg-white"><option value="">-- Не выбрано --</option>{medicines.map(med => <option key={med.id} value={med.id}>{med.name}</option>)}</select></td>
-                                    <td className="p-2"><input type="text" value={editFormData.dosage} onChange={e => setEditFormData({...editFormData, dosage: e.target.value})} className="p-1 border rounded w-24"/></td>
-                                    <td className="p-2"><input type="number" step="0.1" value={editFormData.water_consumption} onChange={e => setEditFormData({...editFormData, water_consumption: e.target.value})} className="p-1 border rounded w-20"/></td>
-                                    <td className="px-4 py-4 text-right flex gap-2 justify-end"><button onClick={() => handleUpdate(log.id)} className="font-medium text-green-600">Сохранить</button><button onClick={() => setEditingId(null)} className="font-medium text-gray-500">Отмена</button></td>
+                                    <td className="px-3 py-4">{calculateAge(batch.start_date, editFormData.log_date)}</td>
+                                    <td className="p-2"><input type="number" value={editFormData.mortality} onChange={e => setEditFormData({...editFormData, mortality: e.target.value})} className="p-1 border rounded w-16"/></td>
+                                    <td className="p-2"><input type="number" value={editFormData.weight} onChange={e => setEditFormData({...editFormData, weight: e.target.value})} placeholder="г/гол" className="p-1 border rounded w-20"/></td>
+                                    <td className="p-2"><input type="number" step="0.1" value={editFormData.water_consumption} onChange={e => setEditFormData({...editFormData, water_consumption: e.target.value})} placeholder="литров" className="p-1 border rounded w-20"/></td>
+                                    <td className="p-2"><input type="number" step="0.1" value={editFormData.daily_feed} onChange={e => setEditFormData({...editFormData, daily_feed: e.target.value})} placeholder="мешков" className="p-1 border rounded w-20"/></td>
+                                    <td className="p-2"><select value={editFormData.medicine_id} onChange={e => setEditFormData({...editFormData, medicine_id: e.target.value})} className="p-1 border rounded w-full bg-white"><option value="">--</option>{medicines.map(med => <option key={med.id} value={med.id}>{med.name}</option>)}</select></td>
+                                    <td className="p-2"><input type="text" value={editFormData.dosage} onChange={e => setEditFormData({...editFormData, dosage: e.target.value})} className="p-1 border rounded w-20"/></td>
+                                    <td className="px-3 py-4 text-right flex gap-2 justify-end"><button onClick={() => handleUpdate(log.id)} className="font-medium text-green-600">✓</button><button onClick={() => setEditingId(null)} className="font-medium text-gray-500">✕</button></td>
                                 </>
                             ) : (
                                 <>
-                                    <td className="px-4 py-4"><p className="font-medium">{new Date(log.log_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p></td>
-                                    <td className="px-4 py-4">{log.age}</td>
-                                    <td className="px-4 py-4 text-red-600 font-semibold">{log.mortality}</td>
-                                    <td className="px-4 py-4">{log.weight ?? '–'}</td>
-                                    <td className="px-4 py-4">{log.daily_feed ?? '–'}</td>
-                                    <td className="px-4 py-4">{log.medicine ? log.medicine.name : '–'}</td>
-                                    <td className="px-4 py-4">{log.dosage || '–'}</td>
-                                    <td className="px-4 py-4">{log.water_consumption || '–'}</td>
-                                    <td className="px-4 py-4 text-right">{batch.is_active && (<div className="flex gap-4 justify-end"><button onClick={() => handleEditClick(log)} className="font-medium text-blue-600">Редактировать</button><button onClick={() => handleDelete(log.id)} className="font-medium text-red-600">Удалить</button></div>)}</td>
+                                    <td className="px-3 py-4"><p className="font-medium">{new Date(log.log_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p></td>
+                                    <td className="px-3 py-4">{log.age}</td>
+                                    <td className="px-3 py-4 text-red-600 font-semibold">{log.mortality}</td>
+                                    <td className="px-3 py-4">{log.weight ?? '–'}</td>
+                                    <td className="px-3 py-4">
+                                        {log.water_consumption ? (
+                                            <>{log.water_consumption} л<span className="text-xs text-gray-400 ml-1">({perHeadWater(log)} мл/гол)</span></>
+                                        ) : '–'}
+                                    </td>
+                                    <td className="px-3 py-4">
+                                        {log.daily_feed ? (
+                                            <>{log.daily_feed} мешк.<span className="text-xs text-gray-400 ml-1">({perHeadFeed(log)} г/гол)</span></>
+                                        ) : '–'}
+                                    </td>
+                                    <td className="px-3 py-4">{log.medicine ? log.medicine.name : '–'}</td>
+                                    <td className="px-3 py-4">{log.dosage || '–'}</td>
+                                    <td className="px-3 py-4 text-right">{batch.is_active && (<div className="flex gap-3 justify-end"><button onClick={() => handleEditClick(log)} className="font-medium text-blue-600">Ред.</button><button onClick={() => handleDelete(log.id)} className="font-medium text-red-600">Уд.</button></div>)}</td>
                                 </>
                             )}
                         </tr>
@@ -78,6 +144,54 @@ const SalesTable = ({ items }) => (<div className="overflow-x-auto"><table class
 const FeedTable = ({ items }) => (<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left"><th className="py-2">Дата</th><th className="py-2">Тип</th><th className="py-2">Количество</th></tr></thead><tbody>{items.map(item => (<tr key={item.id} className="border-b"><td className="py-2">{new Date(item.delivery_date).toLocaleDateString()}</td><td className="py-2 capitalize">{item.feed_type}</td><td className="py-2 font-semibold">{item.quantity_kg} кг</td></tr>))}</tbody></table></div>);
 const SalariesTable = ({ items }) => (<div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left"><th className="py-2">Дата</th><th className="py-2">Сотрудник</th><th className="py-2">Тип</th><th className="py-2">Сумма</th></tr></thead><tbody>{items.map(item => (<tr key={item.id} className="border-b"><td className="py-2">{new Date(item.payment_date).toLocaleDateString()}</td><td className="py-2">{item.employee_name}</td><td className="py-2 capitalize">{item.payment_type}</td><td className="py-2 font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(item.amount)}</td></tr>))}</tbody></table></div>);
 
+// --- Компонент фильтра падежа по периоду ---
+const MortalityPeriodFilter = ({ logs }) => {
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+
+    const filtered = useMemo(() => {
+        if (!dateFrom && !dateTo) return null;
+        return logs.filter(log => {
+            if (dateFrom && log.log_date < dateFrom) return false;
+            if (dateTo && log.log_date > dateTo) return false;
+            return true;
+        });
+    }, [logs, dateFrom, dateTo]);
+
+    const totalMort = filtered ? filtered.reduce((s, l) => s + l.mortality, 0) : null;
+    const daysCount = filtered ? filtered.length : 0;
+
+    return (
+        <div className="bg-white p-4 rounded-lg shadow-md border mb-4">
+            <h4 className="text-lg font-semibold mb-3">📅 Фильтр падежа по периоду</h4>
+            <div className="flex flex-wrap items-end gap-4">
+                <div>
+                    <label className="block text-sm text-gray-600">С</label>
+                    <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                        className="mt-1 p-2 border rounded" />
+                </div>
+                <div>
+                    <label className="block text-sm text-gray-600">По</label>
+                    <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                        className="mt-1 p-2 border rounded" />
+                </div>
+                {totalMort !== null && (
+                    <div className="bg-gray-50 px-4 py-2 rounded-lg border">
+                        <p className="text-sm text-gray-600">Записей: <strong>{daysCount}</strong></p>
+                        <p className="text-lg font-bold text-red-600">Падёж за период: {totalMort} голов</p>
+                    </div>
+                )}
+                {(dateFrom || dateTo) && (
+                    <button onClick={() => { setDateFrom(''); setDateTo(''); }}
+                        className="text-sm text-gray-500 hover:text-gray-700 underline">
+                        Сбросить
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+};
+
 function BatchLogPage() {
     const { batchId } = useParams();
     const [batch, setBatch] = useState(null);
@@ -89,6 +203,8 @@ function BatchLogPage() {
     const [feed, setFeed] = useState([]);
     const [salaries, setSalaries] = useState([]);
     const [medicines, setMedicines] = useState([]);
+    const [historicalBatches, setHistoricalBatches] = useState([]);
+    const [historicalLogs, setHistoricalLogs] = useState([]);
     const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
     const [mortality, setMortality] = useState('');
     const [medicineId, setMedicineId] = useState('');
@@ -118,6 +234,22 @@ function BatchLogPage() {
             if (feedRes.error) throw feedRes.error; setFeed(feedRes.data || []);
             if (salariesRes.error) throw salariesRes.error; setSalaries(salariesRes.data || []);
 
+            // Историческое сравнение падежа: загружаем другие партии
+            const otherBatchesRes = await supabase
+                .from('broiler_batches')
+                .select('id, batch_name, initial_quantity')
+                .neq('id', batchId);
+            const otherBatches = otherBatchesRes.data || [];
+            setHistoricalBatches(otherBatches);
+
+            if (otherBatches.length > 0) {
+                const histLogsRes = await supabase
+                    .from('daily_logs')
+                    .select('batch_id, age, mortality')
+                    .in('batch_id', otherBatches.map(b => b.id));
+                setHistoricalLogs(histLogsRes.data || []);
+            }
+
         } catch (error) {
             console.error("Ошибка при загрузке данных партии:", error);
             alert("Не удалось загрузить все данные по партии.");
@@ -133,14 +265,27 @@ function BatchLogPage() {
         }
     }, [batchId]);
 
-    // Рассчитать текущий возраст по выбранной дате
-    const getCurrentAge = () => {
+    // Текущий возраст
+    const currentAge = useMemo(() => {
         if (!batch) return 0;
         const age = new Date(logDate).getTime() - new Date(batch.start_date).getTime();
         return Math.ceil(age / (1000 * 3600 * 24));
-    };
+    }, [batch, logDate]);
 
-    const currentAge = getCurrentAge();
+    // Текущее поголовье
+    const totalMortality = useMemo(() => logs.reduce((sum, log) => sum + log.mortality, 0), [logs]);
+    const currentQuantity = batch ? batch.initial_quantity - totalMortality : 0;
+
+    // Авто-расчёт на голову в форме
+    const waterPerHead = useMemo(() => {
+        if (!water || currentQuantity <= 0) return '';
+        return Math.round((parseFloat(water) * 1000) / currentQuantity);
+    }, [water, currentQuantity]);
+
+    const feedPerHead = useMemo(() => {
+        if (!dailyFeed || currentQuantity <= 0) return '';
+        return Math.round((parseFloat(dailyFeed) * FEED_BAG_WEIGHT_G) / currentQuantity);
+    }, [dailyFeed, currentQuantity]);
 
     // Справочный расчёт допустимого суточного падежа
     const getMortalityHint = () => {
@@ -160,10 +305,11 @@ function BatchLogPage() {
         e.preventDefault();
         setIsSubmitting(true);
 
-        // Проверка критических отклонений перед сохранением
+        // Проверка критических отклонений
         const checks = [
             compareWithNorm(currentAge, 'weight', weight),
-            compareWithNorm(currentAge, 'dailyFeed', dailyFeed),
+            compareWithNorm(currentAge, 'dailyFeed', feedPerHead),
+            compareWithNorm(currentAge, 'waterNorm', waterPerHead),
         ];
         const hasCritical = checks.some(r => r?.status === 'critical');
         if (hasCritical) {
@@ -175,7 +321,7 @@ function BatchLogPage() {
 
         const age = new Date(logDate).getTime() - new Date(batch.start_date).getTime();
         const { data: { user } } = await supabase.auth.getUser();
-        const { error } = await supabase.from('daily_logs').insert([ {
+        const { error } = await supabase.from('daily_logs').insert([{
             batch_id: batchId,
             log_date: logDate,
             age: Math.ceil(age / (1000 * 3600 * 24)),
@@ -186,7 +332,7 @@ function BatchLogPage() {
             weight: weight ? parseFloat(weight) : null,
             daily_feed: dailyFeed ? parseFloat(dailyFeed) : null,
             user_id: user.id
-        } ]);
+        }]);
         if (error) { alert(error.message); }
         else { setMortality(''); setMedicineId(''); setDosage(''); setWater(''); setWeight(''); setDailyFeed(''); await fetchAllBatchData(); }
         setIsSubmitting(false);
@@ -194,9 +340,6 @@ function BatchLogPage() {
 
     if (loading) { return <div className="text-center p-8">Загрузка...</div>; }
     if (!batch) { return <div className="text-center p-8">Партия не найдена.</div>; }
-
-    const totalMortality = logs.reduce((sum, log) => sum + log.mortality, 0);
-    const currentQuantity = batch.initial_quantity - totalMortality;
 
     const TabButton = ({ tabName, label, count }) => ( <button onClick={() => setActiveTab(tabName)} className={`py-2 px-4 font-semibold flex items-center gap-2 ${activeTab === tabName ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:bg-gray-100'}`}> {label} <span className="text-xs bg-gray-200 rounded-full px-2 py-0.5">{count}</span> </button> );
 
@@ -207,20 +350,54 @@ function BatchLogPage() {
             <div className="flex flex-wrap gap-x-6 gap-y-2 text-gray-600 mb-6"><span>Начало: {new Date(batch.start_date).toLocaleDateString()}</span><span>Начальное поголовье: {batch.initial_quantity}</span><span className="font-bold text-red-600">Общий падеж: {totalMortality}</span><span className="font-bold text-green-600">Текущее поголовье: {currentQuantity}</span></div>
 
             {/* Дашборд Норм vs Факт */}
-            <DashboardNormFact logs={logs} initialBirds={batch.initial_quantity} />
+            <DashboardNormFact
+                logs={logs}
+                initialBirds={batch.initial_quantity}
+                historicalBatches={historicalBatches}
+                historicalLogs={historicalLogs}
+            />
+
+            {/* Фильтр падежа по периоду */}
+            <MortalityPeriodFilter logs={logs} />
 
             <div className="bg-white rounded-lg shadow-md mt-4">
                 <div className="flex border-b overflow-x-auto"><TabButton tabName="journal" label="Журнал" count={logs.length} /><TabButton tabName="expenses" label="Расходы" count={expenses.length} /><TabButton tabName="sales" label="Продажи" count={sales.length} /><TabButton tabName="feed" label="Корм" count={feed.length} /><TabButton tabName="salaries" label="Зарплаты" count={salaries.length} /></div>
                 <div className="p-4 md:p-6">
                     {activeTab === 'journal' && (<>{batch.is_active && (<div className="bg-gray-50 p-4 rounded-lg mb-6"><h3 className="text-xl font-semibold mb-4">Добавить запись</h3><form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div><label>Дата</label><input type="date" value={logDate} onChange={e => setLogDate(e.target.value)} required className="mt-1 w-full p-2 border rounded"/></div>
-                        <div><label className="flex items-center flex-wrap">Падеж <NormIndicator result={getMortalityHint()} /></label><input type="number" value={mortality} onChange={e => setMortality(e.target.value)} required className="mt-1 w-full p-2 border rounded"/></div>
-                        <div><label>Вода</label><input type="number" step="0.1" value={water} onChange={e => setWater(e.target.value)} className="mt-1 w-full p-2 border rounded"/></div>
-                        <div><label className="flex items-center flex-wrap">Живая масса (г/гол) <NormIndicator result={compareWithNorm(currentAge, 'weight', weight)} /></label><input type="number" value={weight} onChange={e => setWeight(e.target.value)} placeholder="Факт, г" className="mt-1 w-full p-2 border rounded"/></div>
-                        <div><label className="flex items-center flex-wrap">Корм (г/гол/сутки) <NormIndicator result={compareWithNorm(currentAge, 'dailyFeed', dailyFeed)} /></label><input type="number" value={dailyFeed} onChange={e => setDailyFeed(e.target.value)} placeholder="Факт, г" className="mt-1 w-full p-2 border rounded"/></div>
+
+                        <div>
+                            <label className="flex items-center flex-wrap gap-1">Падеж <NormIndicator result={getMortalityHint()} /></label>
+                            <input type="number" value={mortality} onChange={e => setMortality(e.target.value)} required className="mt-1 w-full p-2 border rounded"/>
+                        </div>
+
+                        <div>
+                            <label className="flex items-center flex-wrap gap-1">Живая масса (г/гол) <NormIndicator result={compareWithNorm(currentAge, 'weight', weight)} /></label>
+                            <input type="number" value={weight} onChange={e => setWeight(e.target.value)} placeholder="Факт, г" className="mt-1 w-full p-2 border rounded"/>
+                        </div>
+
+                        <div>
+                            <label className="flex items-center flex-wrap gap-1">
+                                Вода (литров, всего)
+                                <NormIndicator result={compareWithNorm(currentAge, 'waterNorm', waterPerHead)} />
+                            </label>
+                            <input type="number" step="0.1" value={water} onChange={e => setWater(e.target.value)} placeholder="Общий расход в литрах" className="mt-1 w-full p-2 border rounded"/>
+                            {waterPerHead && <p className="text-xs text-gray-500 mt-1">= {waterPerHead} мл/гол ({currentQuantity} голов)</p>}
+                        </div>
+
+                        <div>
+                            <label className="flex items-center flex-wrap gap-1">
+                                Корм (мешков, 1 мешок = 40 кг)
+                                <NormIndicator result={compareWithNorm(currentAge, 'dailyFeed', feedPerHead)} />
+                            </label>
+                            <input type="number" step="0.1" value={dailyFeed} onChange={e => setDailyFeed(e.target.value)} placeholder="Кол-во мешков" className="mt-1 w-full p-2 border rounded"/>
+                            {feedPerHead && <p className="text-xs text-gray-500 mt-1">= {feedPerHead} г/гол ({currentQuantity} голов, {dailyFeed ? (parseFloat(dailyFeed) * 40).toFixed(0) : 0} кг)</p>}
+                        </div>
+
                         <div><label>Доза</label><input type="text" value={dosage} onChange={e => setDosage(e.target.value)} className="mt-1 w-full p-2 border rounded"/></div>
+
                         <div className="md:col-span-3"><label>Лекарство</label><select value={medicineId} onChange={e => setMedicineId(e.target.value)} className="mt-1 w-full p-2 border rounded bg-white"><option value="">-- Не выбрано --</option>{medicines.map(med => <option key={med.id} value={med.id}>{med.name}</option>)}</select></div>
-                        <button type="submit" disabled={isSubmitting} className="md:col-span-3 w-full py-2 text-white bg-indigo-600 rounded">{isSubmitting ? '...' : 'Добавить'}</button>
+                        <button type="submit" disabled={isSubmitting} className="md:col-span-3 w-full py-2 text-white bg-indigo-600 rounded hover:bg-indigo-700 disabled:bg-gray-400">{isSubmitting ? '...' : 'Добавить'}</button>
                     </form></div>)}<JournalTable logs={logs} batch={batch} medicines={medicines} fetchData={fetchAllBatchData} /></>)}
                     {activeTab === 'expenses' && <ExpensesTable items={expenses} />}
                     {activeTab === 'sales' && <SalesTable items={sales} />}
