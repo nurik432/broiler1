@@ -68,8 +68,8 @@ function BatchesPage() {
             ];
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(batchData), 'Партия');
 
-            const logsHeader = ['log_date', 'age', 'mortality', 'medicine', 'dosage', 'water_consumption'];
-            const logsBody = logsRes.data.map(l => [l.log_date, l.age, l.mortality, l.medicine?.name ?? '', l.dosage ?? '', l.water_consumption ?? '']);
+            const logsHeader = ['log_date', 'age', 'mortality', 'weight', 'daily_feed', 'medicine', 'dosage', 'water_consumption'];
+            const logsBody = logsRes.data.map(l => [l.log_date, l.age, l.mortality, l.weight ?? '', l.daily_feed ?? '', l.medicine?.name ?? '', l.dosage ?? '', l.water_consumption ?? '']);
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([logsHeader, ...logsBody]), 'Журнал');
 
             const expBody = expensesRes.data.map(e => [e.expense_date, e.description, e.amount]);
