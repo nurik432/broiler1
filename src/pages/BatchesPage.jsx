@@ -14,7 +14,19 @@ function BatchesPage() {
     const [batchName, setBatchName] = useState('');
     const [initialQuantity, setInitialQuantity] = useState('');
     const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
+    const [selectedWorkshopId, setSelectedWorkshopId] = useState('');
+    const [workshops, setWorkshops] = useState([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Загрузка списка цехов
+    const fetchWorkshops = async () => {
+        const { data } = await supabase
+            .from('workshops')
+            .select('id, name')
+            .eq('is_active', true)
+            .order('name');
+        setWorkshops(data || []);
+    };
 
     const fetchBatches = async () => {
         setIsFetching(true);
@@ -29,7 +41,20 @@ function BatchesPage() {
             alert('Не удалось загрузить список партий.');
             setBatches([]);
         } else {
-            setBatches(data);
+            // RPC может не возвращать workshop_id — подтянем его отдельно
+            if (data && data.length > 0) {
+                const ids = data.map(b => b.id);
+                const { data: workshopData } = await supabase
+                    .from('broiler_batches')
+                    .select('id, workshop_id')
+                    .in('id', ids);
+                const wsMap = {};
+                (workshopData || []).forEach(w => { wsMap[w.id] = w.workshop_id; });
+                const enriched = data.map(b => ({ ...b, workshop_id: wsMap[b.id] || b.workshop_id || null }));
+                setBatches(enriched);
+            } else {
+                setBatches(data || []);
+            }
         }
         setIsFetching(false);
     };
@@ -37,6 +62,10 @@ function BatchesPage() {
     useEffect(() => {
         fetchBatches();
     }, [view]);
+
+    useEffect(() => {
+        fetchWorkshops();
+    }, []);
 
     const exportBatchToXLSX = async (batchId) => {
         try {
@@ -162,6 +191,7 @@ const { error: employeesError } = await supabase
             batch_name: batchName,
             initial_quantity: Number(initialQuantity),
             start_date: startDate,
+            workshop_id: selectedWorkshopId || null,
             user_id: user.id
         }]);
 
@@ -170,9 +200,22 @@ const { error: employeesError } = await supabase
         } else {
             setBatchName('');
             setInitialQuantity('');
+            setSelectedWorkshopId('');
             await fetchBatches();
         }
         setIsSubmitting(false);
+    };
+
+    const handleWorkshopChange = async (batchId, workshopId) => {
+        const { error } = await supabase
+            .from('broiler_batches')
+            .update({ workshop_id: workshopId || null })
+            .eq('id', batchId);
+        if (error) {
+            alert('Ошибка при смене цеха: ' + error.message);
+        } else {
+            await fetchBatches();
+        }
     };
 
     return (
@@ -181,7 +224,7 @@ const { error: employeesError } = await supabase
 
             <div className="bg-white p-6 rounded-lg shadow-md mb-8">
                 <h2 className="text-2xl font-semibold mb-4">Добавить новую партию</h2>
-                <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Название партии</label>
                         <input type="text" placeholder="Партия #1" value={batchName} onChange={e => setBatchName(e.target.value)} required className="mt-1 block w-full p-2 border rounded-md" />
@@ -194,7 +237,19 @@ const { error: employeesError } = await supabase
                         <label className="block text-sm font-medium text-gray-700">Дата начала</label>
                         <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} required className="mt-1 block w-full p-2 border rounded-md" />
                     </div>
-                    <div className="md:col-span-3">
+                    <div>
+                        <label className="block text-sm font-medium text-indigo-700 font-semibold">Цех</label>
+                        <select value={selectedWorkshopId} onChange={e => setSelectedWorkshopId(e.target.value)} className="mt-1 block w-full p-2 border-2 border-indigo-300 rounded-md bg-white focus:border-indigo-500">
+                            <option value="">— Без цеха —</option>
+                            {workshops.map(w => (
+                                <option key={w.id} value={w.id}>{w.name}</option>
+                            ))}
+                        </select>
+                        {workshops.length === 0 && (
+                            <p className="text-xs text-gray-400 mt-1">Нет цехов. Создайте в разделе «Учёт по цехам».</p>
+                        )}
+                    </div>
+                    <div className="md:col-span-4">
                         <button type="submit" disabled={isSubmitting} className="w-full justify-center py-2 px-4 text-white bg-indigo-600 hover:bg-indigo-700 rounded-md disabled:bg-gray-400">
                             {isSubmitting ? 'Добавление...' : 'Добавить партию'}
                         </button>
@@ -223,6 +278,20 @@ const { error: employeesError } = await supabase
                                 <div>
                                     <p className="font-bold text-lg text-gray-800">{batch.batch_name}</p>
                                     <p className="text-sm text-gray-500">Начало: {new Date(batch.start_date).toLocaleDateString()}</p>
+                                    <div className="flex items-center gap-2 mt-1">
+                                        <span className="text-xs text-gray-400">Цех:</span>
+                                        <select
+                                            value={batch.workshop_id || ''}
+                                            onChange={(e) => handleWorkshopChange(batch.id, e.target.value)}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="text-xs p-1 border rounded bg-white text-indigo-700 font-medium"
+                                        >
+                                            <option value="">— Не привязан —</option>
+                                            {workshops.map(w => (
+                                                <option key={w.id} value={w.id}>{w.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
                                 </div>
                                 <div className="flex items-center gap-4 sm:gap-6">
                                     <div className="text-center">
