@@ -7,6 +7,7 @@ import NormIndicator from '../components/NormIndicator';
 import DashboardNormFact from '../components/DashboardNormFact';
 import { compareWithNorm } from '../utils/normComparison';
 import { getWeekMortalityNorm, FEED_BAG_WEIGHT_G } from '../constants/broilerStandards';
+import { syncSummaryBatchLog } from '../utils/summaryBatchSync';
 
 // --- Утилита: поголовье на момент каждой записи ---
 function buildFlockSizeMap(logs, initialQuantity) {
@@ -334,7 +335,13 @@ function BatchLogPage() {
             user_id: user.id
         }]);
         if (error) { alert(error.message); }
-        else { setMortality(''); setMedicineId(''); setDosage(''); setWater(''); setWeight(''); setDailyFeed(''); await fetchAllBatchData(); }
+        else { 
+            setMortality(''); setMedicineId(''); setDosage(''); setWater(''); setWeight(''); setDailyFeed(''); 
+            await fetchAllBatchData(); 
+            if (!batch?.is_summary) {
+                await syncSummaryBatchLog(logDate, user.id);
+            }
+        }
         setIsSubmitting(false);
     };
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
-import { getNormForDay } from '../constants/broilerStandards';
-import { FEED_BAG_WEIGHT_G } from '../constants/broilerStandards';
+import { getNormForDay, FEED_BAG_WEIGHT_G } from '../constants/broilerStandards';
+import { syncSummaryBatchLog } from '../utils/summaryBatchSync';
 
 export default function DailyEntryPage() {
   const [workshops, setWorkshops] = useState([]);
@@ -145,6 +145,9 @@ export default function DailyEntryPage() {
         ...prev,
         [workshop.id]: { mortality: '', feed: '', water: '' }
       }));
+
+      // Синхронизация "Общей партии"
+      await syncSummaryBatchLog(todayDate, user.id);
 
       // Перезагрузить данные
       await loadAll();

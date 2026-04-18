@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-
+import { syncSummaryBatchLog } from '../utils/summaryBatchSync';
 
 function BatchesPage() {
     const [view, setView] = useState('active');
@@ -218,6 +218,49 @@ const { error: employeesError } = await supabase
         }
     };
 
+    const [isSyncingHistory, setIsSyncingHistory] = useState(false);
+
+    const handleSyncHistory = async () => {
+        setIsSyncingHistory(true);
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            const { data: activeBatches } = await supabase
+                .from('broiler_batches')
+                .select('id')
+                .eq('is_active', true)
+                .eq('is_summary', false)
+                .or('is_summary.is.null');
+                
+            if (!activeBatches || activeBatches.length === 0) {
+                alert('Нет активных нормальных партий для синхронизации.');
+                setIsSyncingHistory(false);
+                return;
+            }
+            
+            const batchIds = activeBatches.map(b => b.id);
+            const { data: logs } = await supabase
+                .from('daily_logs')
+                .select('log_date')
+                .in('batch_id', batchIds);
+
+            if (logs && logs.length > 0) {
+                const uniqueDates = [...new Set(logs.map(l => l.log_date))];
+                for (const date of uniqueDates) {
+                    await syncSummaryBatchLog(date, user.id);
+                }
+                alert('✅ Исторические данные успешно синхронизированы!');
+                await fetchBatches();
+            } else {
+                alert('В активных партиях нет ни одной записи журнала.');
+            }
+        } catch (error) {
+            console.error('Ошибка синхронизации', error);
+            alert('Ошибка синхронизации: ' + error.message);
+        } finally {
+            setIsSyncingHistory(false);
+        }
+    };
+
     return (
         <div>
             <h1 className="text-3xl font-bold text-gray-800 mb-6">Партии бройлеров</h1>
@@ -258,13 +301,24 @@ const { error: employeesError } = await supabase
             </div>
 
             <div className="bg-white p-6 rounded-lg shadow-md">
-                <div className="flex border-b mb-4">
-                    <button onClick={() => setView('active')} className={`py-2 px-4 font-semibold ${view === 'active' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
-                        Активные
-                    </button>
-                    <button onClick={() => setView('archived')} className={`py-2 px-4 font-semibold ${view === 'archived' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
-                        Архивные
-                    </button>
+                <div className="flex border-b mb-4 justify-between items-center flex-wrap gap-4">
+                    <div>
+                        <button onClick={() => setView('active')} className={`py-2 px-4 font-semibold ${view === 'active' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
+                            Активные
+                        </button>
+                        <button onClick={() => setView('archived')} className={`py-2 px-4 font-semibold ${view === 'archived' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
+                            Архивные
+                        </button>
+                    </div>
+                    {view === 'active' && (
+                        <button 
+                            onClick={handleSyncHistory} 
+                            disabled={isSyncingHistory}
+                            className="text-xs px-3 py-1 bg-yellow-100 text-yellow-700 hover:bg-yellow-200 rounded border border-yellow-300 font-medium disabled:opacity-50"
+                        >
+                            {isSyncingHistory ? 'Синхронизация...' : '🔄 Синхронизировать прошлые дни'}
+                        </button>
+                    )}
                 </div>
 
                 {isFetching ? (
@@ -274,24 +328,28 @@ const { error: employeesError } = await supabase
                 ) : (
                     <div className="space-y-4">
                         {batches.map(batch => (
-                            <div key={batch.id} className="p-4 border rounded-lg flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                            <div key={batch.id} className={`p-4 border rounded-lg flex flex-col sm:flex-row justify-between sm:items-center gap-4 ${batch.is_summary ? 'bg-yellow-50 border-yellow-300' : ''}`}>
                                 <div>
-                                    <p className="font-bold text-lg text-gray-800">{batch.batch_name}</p>
+                                    <p className="font-bold text-lg text-gray-800">
+                                        {batch.batch_name} {batch.is_summary && <span className="text-xs bg-yellow-200 text-yellow-800 px-2 py-1 rounded ml-2">Автоматическая</span>}
+                                    </p>
                                     <p className="text-sm text-gray-500">Начало: {new Date(batch.start_date).toLocaleDateString()}</p>
-                                    <div className="flex items-center gap-2 mt-1">
-                                        <span className="text-xs text-gray-400">Цех:</span>
-                                        <select
-                                            value={batch.workshop_id || ''}
-                                            onChange={(e) => handleWorkshopChange(batch.id, e.target.value)}
-                                            onClick={(e) => e.stopPropagation()}
-                                            className="text-xs p-1 border rounded bg-white text-indigo-700 font-medium"
-                                        >
-                                            <option value="">— Не привязан —</option>
-                                            {workshops.map(w => (
-                                                <option key={w.id} value={w.id}>{w.name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
+                                    {!batch.is_summary && (
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <span className="text-xs text-gray-400">Цех:</span>
+                                            <select
+                                                value={batch.workshop_id || ''}
+                                                onChange={(e) => handleWorkshopChange(batch.id, e.target.value)}
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="text-xs p-1 border rounded bg-white text-indigo-700 font-medium"
+                                            >
+                                                <option value="">— Не привязан —</option>
+                                                {workshops.map(w => (
+                                                    <option key={w.id} value={w.id}>{w.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="flex items-center gap-4 sm:gap-6">
                                     <div className="text-center">
@@ -307,12 +365,14 @@ const { error: employeesError } = await supabase
                                             Журнал
                                         </Link>
                                         {view === 'active' ? (
-                                            <button
-                                                onClick={() => handleToggleBatchStatus(batch.id, false)}
-                                                className="px-4 py-2 text-sm font-medium text-white bg-red-500 rounded-md hover:bg-red-600"
-                                            >
-                                                Завершить
-                                            </button>
+                                            !batch.is_summary && (
+                                                <button
+                                                    onClick={() => handleToggleBatchStatus(batch.id, false)}
+                                                    className="px-4 py-2 text-sm font-medium text-white bg-red-500 rounded-md hover:bg-red-600"
+                                                >
+                                                    Завершить
+                                                </button>
+                                            )
                                         ) : (
                                             <>
                                                 <Link to={`/batch/${batch.id}/report`} className="px-4 py-2 text-sm text-center font-medium text-white bg-blue-500 rounded-md hover:bg-blue-600">
