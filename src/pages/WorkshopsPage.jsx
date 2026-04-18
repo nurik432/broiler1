@@ -244,6 +244,34 @@ function AllWorkshopsSummary({ workshops }) {
               );
             })}
           </tbody>
+          <tfoot>
+            {(() => {
+              let totalHead = 0, totalMort = 0, totalFeed = 0;
+              workshops.forEach(w => {
+                const active = w.batches?.find(b => b.is_active);
+                if (!active) return;
+                totalHead += active.initial_quantity || 0;
+                const sd = summaryData[w.id];
+                if (sd) {
+                  totalMort += sd.mortality || 0;
+                  totalFeed += sd.daily_feed || 0;
+                }
+              });
+              return (
+                <tr style={{ background: '#f0f4ff', borderTop: '2px solid #4f46e5' }}>
+                  <td style={{ padding: '10px 12px', fontWeight: 'bold', color: '#4f46e5' }}>ИТОГО</td>
+                  <td style={{ padding: '10px 12px' }}></td>
+                  <td style={{ padding: '10px 12px' }}></td>
+                  <td style={{ padding: '10px 12px', fontWeight: 'bold' }}>{totalHead.toLocaleString()}</td>
+                  <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 'bold', color: '#dc3545' }}>{totalMort}</td>
+                  <td style={{ padding: '10px 12px' }}></td>
+                  <td style={{ padding: '10px 12px' }}></td>
+                  <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 'bold', color: '#fd7e14' }}>{totalFeed}</td>
+                  <td style={{ padding: '10px 12px' }}></td>
+                </tr>
+              );
+            })()}
+          </tfoot>
         </table>
       </div>
       <p style={{ fontSize:12, color:'#999', marginTop:8 }}>
