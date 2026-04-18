@@ -11,8 +11,7 @@ export async function syncSummaryBatchLog(logDate, userId) {
             .from('broiler_batches')
             .select('id, initial_quantity, start_date')
             .eq('is_active', true)
-            .eq('is_summary', false) // Исключаем саму сводную партию
-            .or('is_summary.is.null'); // на случай если у старых null
+            .or('is_summary.eq.false,is_summary.is.null'); // Исключаем саму сводную партию
 
         if (errBatches) throw errBatches;
         if (!activeBatches || activeBatches.length === 0) return;

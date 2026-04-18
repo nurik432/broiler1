@@ -228,8 +228,7 @@ const { error: employeesError } = await supabase
                 .from('broiler_batches')
                 .select('id')
                 .eq('is_active', true)
-                .eq('is_summary', false)
-                .or('is_summary.is.null');
+                .or('is_summary.eq.false,is_summary.is.null');
                 
             if (!activeBatches || activeBatches.length === 0) {
                 alert('Нет активных нормальных партий для синхронизации.');
