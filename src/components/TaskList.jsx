@@ -67,8 +67,8 @@ export default function TaskList({ tasks, onStatusChange, onDelete,
                 )}
 
                 <div style={{ display:'flex', gap:16, fontSize:12, color:'#888', flexWrap:'wrap' }}>
-                  {task.assignee && (
-                    <span>👤 {task.assignee.name} {task.assignee.role ? `· ${task.assignee.role}` : ''}</span>
+                    {task.assignee && (
+                    <span>👤 {task.assignee.full_name} {task.assignee.position ? `· ${task.assignee.position}` : ''}</span>
                   )}
                   {task.workshop && <span>🏠 {task.workshop.name}</span>}
                   {task.due_date && (

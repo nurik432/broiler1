@@ -79,6 +79,7 @@ export function useBatchData(batchId) {
 
 /**
  * Загружает список всех цехов с текущей активной партией
+ * + CRUD операции: создание, редактирование, удаление
  */
 export function useWorkshops() {
   const [workshops, setWorkshops] = useState([]);
@@ -101,5 +102,31 @@ export function useWorkshops() {
     setLoading(false);
   }
 
-  return { workshops, loading, reload: load };
+  async function createWorkshop({ name, capacity, description }) {
+    const { error } = await supabase.from('workshops').insert([{
+      name,
+      capacity: capacity ? Number(capacity) : null,
+      description: description || null,
+    }]);
+    if (!error) await load();
+    return { error };
+  }
+
+  async function updateWorkshop(id, updates) {
+    const { error } = await supabase.from('workshops').update({
+      name: updates.name,
+      capacity: updates.capacity ? Number(updates.capacity) : null,
+      description: updates.description || null,
+    }).eq('id', id);
+    if (!error) await load();
+    return { error };
+  }
+
+  async function deleteWorkshop(id) {
+    const { error } = await supabase.from('workshops').update({ is_active: false }).eq('id', id);
+    if (!error) await load();
+    return { error };
+  }
+
+  return { workshops, loading, reload: load, createWorkshop, updateWorkshop, deleteWorkshop };
 }

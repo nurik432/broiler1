@@ -6,22 +6,65 @@ import { supabase } from '../supabaseClient';
 import { getNormForDay } from '../constants/broilerStandards';
 
 export default function WorkshopsPage() {
-  const { workshops, loading } = useWorkshops();
+  const { workshops, loading, createWorkshop, updateWorkshop, deleteWorkshop } = useWorkshops();
   const [selectedWorkshop, setSelectedWorkshop] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [editingWorkshop, setEditingWorkshop] = useState(null);
+
+  const handleCreate = async (data) => {
+    const { error } = await createWorkshop(data);
+    if (error) { alert('Ошибка: ' + error.message); }
+    else { setShowForm(false); }
+  };
+
+  const handleUpdate = async (data) => {
+    const { error } = await updateWorkshop(editingWorkshop.id, data);
+    if (error) { alert('Ошибка: ' + error.message); }
+    else { setEditingWorkshop(null); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Вы уверены, что хотите удалить этот цех? Цех будет деактивирован (данные сохранятся).')) return;
+    const { error } = await deleteWorkshop(id);
+    if (error) { alert('Ошибка: ' + error.message); }
+    else {
+      if (selectedWorkshop?.id === id) setSelectedWorkshop(null);
+    }
+  };
 
   if (loading) return <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>Загрузка...</div>;
 
   return (
     <div>
-      <h2 style={{ fontSize: 24, fontWeight: 'bold', color: '#1f2937', marginBottom: 20 }}>🏭 Учёт по цехам</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+        <h2 style={{ fontSize: 24, fontWeight: 'bold', color: '#1f2937', margin: 0 }}>🏭 Учёт по цехам</h2>
+        <button
+          onClick={() => { setShowForm(true); setEditingWorkshop(null); }}
+          style={{
+            padding: '8px 16px', background: '#4f46e5', color: '#fff',
+            border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold', fontSize: 14
+          }}
+        >
+          + Добавить цех
+        </button>
+      </div>
 
-      {workshops.length === 0 ? (
+      {/* Форма создания/редактирования цеха */}
+      {(showForm || editingWorkshop) && (
+        <WorkshopForm
+          initialData={editingWorkshop}
+          onSubmit={editingWorkshop ? handleUpdate : handleCreate}
+          onClose={() => { setShowForm(false); setEditingWorkshop(null); }}
+        />
+      )}
+
+      {workshops.length === 0 && !showForm ? (
         <div style={{
           textAlign: 'center', padding: 60, background: '#fff',
           borderRadius: 8, border: '1px solid #dee2e6',
         }}>
           <p style={{ fontSize: 16, color: '#999', marginBottom: 12 }}>Цеха ещё не добавлены</p>
-          <p style={{ fontSize: 13, color: '#bbb' }}>Добавьте цеха в Supabase → таблица <code>workshops</code></p>
+          <p style={{ fontSize: 13, color: '#bbb' }}>Нажмите «+ Добавить цех» чтобы создать первый</p>
         </div>
       ) : (
         <>
@@ -33,6 +76,8 @@ export default function WorkshopsPage() {
                 workshop={w}
                 isSelected={selectedWorkshop?.id === w.id}
                 onClick={() => setSelectedWorkshop(w.id === selectedWorkshop?.id ? null : w)}
+                onEdit={() => setEditingWorkshop(w)}
+                onDelete={() => handleDelete(w.id)}
               />
             ))}
           </div>
@@ -54,6 +99,83 @@ export default function WorkshopsPage() {
   );
 }
 
+// --- Форма создания/редактирования цеха ---
+function WorkshopForm({ initialData, onSubmit, onClose }) {
+  const [name, setName] = useState(initialData?.name || '');
+  const [capacity, setCapacity] = useState(initialData?.capacity || '');
+  const [description, setDescription] = useState(initialData?.description || '');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) { alert('Укажите название цеха'); return; }
+    setSubmitting(true);
+    await onSubmit({ name: name.trim(), capacity, description });
+    setSubmitting(false);
+  }
+
+  return (
+    <div style={{
+      background: '#fff', border: '1px solid #dee2e6', borderRadius: 8,
+      padding: 24, marginBottom: 20, boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+    }}>
+      <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 'bold', color: '#1f2937' }}>
+        {initialData ? '✏️ Редактировать цех' : '➕ Новый цех'}
+      </h3>
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+          <div>
+            <label style={labelStyle}>Название цеха *</label>
+            <input
+              value={name} onChange={e => setName(e.target.value)}
+              placeholder="Цех №1"
+              style={{ ...inputStyle, width: '100%' }}
+              required
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Вместимость (голов)</label>
+            <input
+              type="number" value={capacity} onChange={e => setCapacity(e.target.value)}
+              placeholder="45000"
+              style={{ ...inputStyle, width: '100%' }}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Описание</label>
+            <input
+              value={description} onChange={e => setDescription(e.target.value)}
+              placeholder="Основной цех, утеплённый..."
+              style={{ ...inputStyle, width: '100%' }}
+            />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            type="submit" disabled={submitting}
+            style={{
+              padding: '8px 20px', background: '#4f46e5', color: '#fff',
+              border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold',
+            }}
+          >
+            {submitting ? 'Сохранение...' : initialData ? 'Сохранить' : 'Создать цех'}
+          </button>
+          <button
+            type="button" onClick={onClose}
+            style={{
+              padding: '8px 16px', background: '#f0f0f0', border: '1px solid #ccc',
+              borderRadius: 6, cursor: 'pointer',
+            }}
+          >
+            Отмена
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// --- Сводная таблица всех цехов ---
 function AllWorkshopsSummary({ workshops }) {
   const [summaryData, setSummaryData] = useState({});
 
@@ -130,3 +252,6 @@ function AllWorkshopsSummary({ workshops }) {
     </div>
   );
 }
+
+const labelStyle = { display: 'block', fontSize: 13, color: '#555', marginBottom: 4, fontWeight: '500' };
+const inputStyle = { padding: '8px 10px', border: '1px solid #dee2e6', borderRadius: 6, fontSize: 14, boxSizing: 'border-box' };

@@ -60,7 +60,7 @@ export default function TaskForm({ employees, workshops, onSubmit, onClose, init
             <select value={form.assignee_id} onChange={set('assignee_id')} style={{ ...inputStyle, width:'100%' }}>
               <option value=''>— Выберите —</option>
               {employees.map(e => (
-                <option key={e.id} value={e.id}>{e.name} {e.role ? `(${e.role})` : ''}</option>
+                <option key={e.id} value={e.id}>{e.full_name} {e.position ? `(${e.position})` : ''}</option>
               ))}
             </select>
           </div>

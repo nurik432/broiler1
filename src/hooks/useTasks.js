@@ -13,7 +13,7 @@ export function useTasks(filters = {}) {
       .from('tasks')
       .select(`
         *,
-        assignee:employees(id, name, role),
+        assignee:employees(id, full_name, position),
         workshop:workshops(id, name),
         batch:broiler_batches(id, batch_name)
       `)
@@ -62,7 +62,7 @@ export function useEmployees() {
       .from('employees')
       .select('*')
       .eq('is_active', true)
-      .order('name')
+      .order('full_name')
       .then(({ data }) => setEmployees(data || []));
   }, []);
 

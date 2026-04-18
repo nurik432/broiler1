@@ -84,7 +84,7 @@ export default function TasksPage() {
           style={selectStyle}>
           <option value=''>Все исполнители</option>
           {employees.map(e =>
-            <option key={e.id} value={e.id}>{e.name}</option>)}
+            <option key={e.id} value={e.id}>{e.full_name}</option>)}
         </select>
 
         <select value={filterWorkshop} onChange={e => setFilterWorkshop(e.target.value)}
