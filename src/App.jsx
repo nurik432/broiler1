@@ -17,6 +17,8 @@ import SalesPage from './pages/SalesPage';
 import FeedPage from './pages/FeedPage';
 import BatchReportPage from './pages/BatchReportPage';
 import CoalPage from './pages/CoalPage';
+import WorkshopsPage from './pages/WorkshopsPage';
+import TasksPage from './pages/TasksPage';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -60,6 +62,8 @@ function App() {
         <Route path="/feed" element={<FeedPage />} />
         <Route path="/batch/:batchId/report" element={<BatchReportPage />} />
         <Route path="/coal" element={<CoalPage />} />
+        <Route path="/workshops" element={<WorkshopsPage />} />
+        <Route path="/tasks" element={<TasksPage />} />
       </Route>
     </Routes>
   );
