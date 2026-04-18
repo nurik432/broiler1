@@ -1,0 +1,332 @@
+import { useState, useEffect, useMemo } from 'react';
+import { supabase } from '../supabaseClient';
+import { getNormForDay } from '../constants/broilerStandards';
+import { FEED_BAG_WEIGHT_G } from '../constants/broilerStandards';
+
+export default function DailyEntryPage() {
+  const [workshops, setWorkshops] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [todayDate, setTodayDate] = useState(new Date().toISOString().slice(0, 10));
+
+  // Состояния ввода для каждого цеха (по workshop.id)
+  const [entries, setEntries] = useState({});
+  const [submitting, setSubmitting] = useState({});
+  const [todayLogs, setTodayLogs] = useState({}); // Текущие итоги дня
+
+  useEffect(() => {
+    loadAll();
+  }, [todayDate]);
+
+  async function loadAll() {
+    setLoading(true);
+
+    // 1. Загрузить все активные цеха с активными партиями
+    const { data: wsData } = await supabase
+      .from('workshops')
+      .select(`
+        *,
+        batches:broiler_batches (
+          id, batch_name, initial_quantity, start_date, is_active
+        )
+      `)
+      .eq('is_active', true)
+      .order('name');
+
+    const workshopsWithActive = (wsData || []).map(w => ({
+      ...w,
+      activeBatch: w.batches?.find(b => b.is_active) || null,
+    })).filter(w => w.activeBatch);
+
+    setWorkshops(workshopsWithActive);
+
+    // 2. Загрузить текущие записи журнала за выбранный день для каждой активной партии
+    const logs = {};
+    for (const w of workshopsWithActive) {
+      const { data: logData } = await supabase
+        .from('daily_logs')
+        .select('*')
+        .eq('batch_id', w.activeBatch.id)
+        .eq('log_date', todayDate)
+        .maybeSingle();
+
+      logs[w.id] = logData || null;
+    }
+    setTodayLogs(logs);
+    setLoading(false);
+  }
+
+  // Расчёт возраста партии
+  function getAge(startDate) {
+    const start = new Date(startDate);
+    const current = new Date(todayDate);
+    return Math.ceil(Math.abs(current - start) / (1000 * 60 * 60 * 24));
+  }
+
+  // Расчёт текущего поголовья (из всех записей журнала)
+  async function getCurrentFlock(batchId, initialQuantity) {
+    const { data } = await supabase
+      .from('daily_logs')
+      .select('mortality')
+      .eq('batch_id', batchId);
+    const totalDead = (data || []).reduce((sum, r) => sum + (r.mortality || 0), 0);
+    return initialQuantity - totalDead;
+  }
+
+  // Обновить поле ввода
+  function updateEntry(workshopId, field, value) {
+    setEntries(prev => ({
+      ...prev,
+      [workshopId]: {
+        ...(prev[workshopId] || {}),
+        [field]: value,
+      }
+    }));
+  }
+
+  // Добавить данные (суммировать с существующими)
+  async function handleSubmit(workshop) {
+    const entry = entries[workshop.id];
+    if (!entry) return;
+
+    const mortality = Number(entry.mortality) || 0;
+    const feedBags = Number(entry.feed) || 0;
+    const waterLiters = Number(entry.water) || 0;
+
+    if (mortality === 0 && feedBags === 0 && waterLiters === 0) {
+      alert('Введите хотя бы одно значение');
+      return;
+    }
+
+    setSubmitting(prev => ({ ...prev, [workshop.id]: true }));
+
+    const batch = workshop.activeBatch;
+    const age = getAge(batch.start_date);
+    const existingLog = todayLogs[workshop.id];
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (existingLog) {
+        // Обновить существующую запись — суммировать
+        const newMortality = (existingLog.mortality || 0) + mortality;
+        const newFeed = (existingLog.daily_feed || 0) + feedBags;
+        const newWater = (existingLog.water_consumption || 0) + waterLiters;
+
+        const { error } = await supabase
+          .from('daily_logs')
+          .update({
+            mortality: newMortality,
+            daily_feed: newFeed,
+            water_consumption: newWater,
+          })
+          .eq('id', existingLog.id);
+
+        if (error) throw error;
+      } else {
+        // Создать новую запись за сегодня
+        const { error } = await supabase
+          .from('daily_logs')
+          .insert([{
+            batch_id: batch.id,
+            workshop_id: workshop.id,
+            log_date: todayDate,
+            age: age,
+            mortality: mortality,
+            daily_feed: feedBags,
+            water_consumption: waterLiters,
+            user_id: user.id,
+          }]);
+
+        if (error) throw error;
+      }
+
+      // Очистить форму ввода
+      setEntries(prev => ({
+        ...prev,
+        [workshop.id]: { mortality: '', feed: '', water: '' }
+      }));
+
+      // Перезагрузить данные
+      await loadAll();
+    } catch (err) {
+      alert('Ошибка: ' + err.message);
+    }
+
+    setSubmitting(prev => ({ ...prev, [workshop.id]: false }));
+  }
+
+  if (loading) return <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>Загрузка...</div>;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+        <h2 style={{ fontSize: 24, fontWeight: 'bold', color: '#1f2937', margin: 0 }}>📝 Дневной ввод по цехам</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ fontSize: 14, color: '#555' }}>Дата:</label>
+          <input
+            type="date"
+            value={todayDate}
+            onChange={e => setTodayDate(e.target.value)}
+            style={{ padding: '6px 10px', border: '1px solid #dee2e6', borderRadius: 6, fontSize: 14 }}
+          />
+        </div>
+      </div>
+
+      {workshops.length === 0 ? (
+        <div style={{
+          textAlign: 'center', padding: 60, background: '#fff',
+          borderRadius: 8, border: '1px solid #dee2e6',
+        }}>
+          <p style={{ fontSize: 16, color: '#999', marginBottom: 8 }}>Нет цехов с активными партиями</p>
+          <p style={{ fontSize: 13, color: '#bbb' }}>Создайте цех и привяжите к нему активную партию</p>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 16 }}>
+          {workshops.map(w => (
+            <WorkshopEntryCard
+              key={w.id}
+              workshop={w}
+              todayLog={todayLogs[w.id]}
+              entry={entries[w.id] || {}}
+              onUpdate={(field, value) => updateEntry(w.id, field, value)}
+              onSubmit={() => handleSubmit(w)}
+              isSubmitting={submitting[w.id]}
+              age={getAge(w.activeBatch.start_date)}
+              todayDate={todayDate}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Карточка ввода для одного цеха ---
+function WorkshopEntryCard({ workshop, todayLog, entry, onUpdate, onSubmit, isSubmitting, age, todayDate }) {
+  const batch = workshop.activeBatch;
+  const norm = getNormForDay(age);
+
+  // Текущие итоги за день
+  const currentMortality = todayLog?.mortality || 0;
+  const currentFeed = todayLog?.daily_feed || 0;
+  const currentWater = todayLog?.water_consumption || 0;
+
+  // Справочно — масса и корм на голову (если есть данные)
+  const hasData = currentMortality > 0 || currentFeed > 0 || currentWater > 0;
+
+  return (
+    <div style={{
+      background: '#fff', borderRadius: 8, border: '1px solid #dee2e6',
+      boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden',
+    }}>
+      {/* Заголовок */}
+      <div style={{
+        padding: '12px 16px', background: '#f8f9fa', borderBottom: '1px solid #eee',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+      }}>
+        <div>
+          <span style={{ fontSize: 16, fontWeight: 'bold', color: '#1f2937' }}>🏠 {workshop.name}</span>
+          <span style={{ fontSize: 13, color: '#888', marginLeft: 8 }}>
+            {batch.batch_name} · {batch.initial_quantity?.toLocaleString()} гол. · День {age}
+          </span>
+        </div>
+        {norm && (
+          <div style={{ fontSize: 11, color: '#999' }}>
+            Норма: масса {norm.weight}г · корм {norm.dailyFeed}г/гол · вода {norm.waterNorm}мл/гол
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: 16 }}>
+        {/* Текущие итоги за день */}
+        {hasData && (
+          <div style={{
+            display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap',
+          }}>
+            <div style={{ ...statBox, borderColor: '#dc354530' }}>
+              <div style={{ fontSize: 11, color: '#888' }}>💀 Падёж сегодня</div>
+              <div style={{ fontSize: 20, fontWeight: 'bold', color: '#dc3545' }}>{currentMortality} гол.</div>
+            </div>
+            <div style={{ ...statBox, borderColor: '#fd7e1430' }}>
+              <div style={{ fontSize: 11, color: '#888' }}>🌾 Корм сегодня</div>
+              <div style={{ fontSize: 20, fontWeight: 'bold', color: '#fd7e14' }}>{currentFeed} мешк.</div>
+              <div style={{ fontSize: 11, color: '#bbb' }}>{(currentFeed * 40).toFixed(0)} кг</div>
+            </div>
+            <div style={{ ...statBox, borderColor: '#007bff30' }}>
+              <div style={{ fontSize: 11, color: '#888' }}>💧 Вода сегодня</div>
+              <div style={{ fontSize: 20, fontWeight: 'bold', color: '#007bff' }}>{currentWater} л</div>
+            </div>
+          </div>
+        )}
+
+        {/* Форма ввода */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 120px', minWidth: 100 }}>
+            <label style={labelStyle}>💀 Падёж (гол.)</label>
+            <input
+              type="number"
+              value={entry.mortality || ''}
+              onChange={e => onUpdate('mortality', e.target.value)}
+              placeholder="0"
+              min="0"
+              style={inputStyle}
+            />
+          </div>
+          <div style={{ flex: '1 1 120px', minWidth: 100 }}>
+            <label style={labelStyle}>🌾 Корм (мешков)</label>
+            <input
+              type="number"
+              step="0.1"
+              value={entry.feed || ''}
+              onChange={e => onUpdate('feed', e.target.value)}
+              placeholder="0"
+              min="0"
+              style={inputStyle}
+            />
+          </div>
+          <div style={{ flex: '1 1 120px', minWidth: 100 }}>
+            <label style={labelStyle}>💧 Вода (литров)</label>
+            <input
+              type="number"
+              step="0.1"
+              value={entry.water || ''}
+              onChange={e => onUpdate('water', e.target.value)}
+              placeholder="0"
+              min="0"
+              style={inputStyle}
+            />
+          </div>
+          <div style={{ flex: '0 0 auto' }}>
+            <button
+              onClick={onSubmit}
+              disabled={isSubmitting}
+              style={{
+                padding: '8px 20px', background: '#4f46e5', color: '#fff',
+                border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 'bold',
+                fontSize: 14, height: 38, whiteSpace: 'nowrap',
+                opacity: isSubmitting ? 0.6 : 1,
+              }}
+            >
+              {isSubmitting ? '...' : '+ Добавить'}
+            </button>
+          </div>
+        </div>
+
+        {/* Подсказка */}
+        <p style={{ fontSize: 11, color: '#bbb', marginTop: 8 }}>
+          Данные суммируются с уже введёнными за {todayDate}. Запись автоматически попадает в журнал партии.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const labelStyle = { display: 'block', fontSize: 12, color: '#666', marginBottom: 4, fontWeight: '500' };
+const inputStyle = {
+  width: '100%', padding: '8px 10px', border: '1px solid #dee2e6',
+  borderRadius: 6, fontSize: 14, boxSizing: 'border-box',
+};
+const statBox = {
+  padding: '8px 16px', borderRadius: 8, border: '1px solid',
+  background: '#fafafa', minWidth: 100, textAlign: 'center',
+};
