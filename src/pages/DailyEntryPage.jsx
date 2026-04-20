@@ -5,6 +5,7 @@ import { syncSummaryBatchLog } from '../utils/summaryBatchSync';
 
 export default function DailyEntryPage() {
   const [workshops, setWorkshops] = useState([]);
+  const [medicines, setMedicines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [todayDate, setTodayDate] = useState(new Date().toISOString().slice(0, 10));
 
@@ -39,12 +40,19 @@ export default function DailyEntryPage() {
 
     setWorkshops(workshopsWithActive);
 
-    // 2. Загрузить текущие записи журнала за выбранный день для каждой активной партии
+    // 2. Загрузить лекарства
+    const { data: medsData } = await supabase
+      .from('medicines')
+      .select('id, name')
+      .order('name');
+    setMedicines(medsData || []);
+
+    // 3. Загрузить текущие записи журнала за выбранный день для каждой активной партии
     const logs = {};
     for (const w of workshopsWithActive) {
       const { data: logData } = await supabase
         .from('daily_logs')
-        .select('*')
+        .select('*, medicine:medicines(name)')
         .eq('batch_id', w.activeBatch.id)
         .eq('log_date', todayDate)
         .maybeSingle();
@@ -88,11 +96,16 @@ export default function DailyEntryPage() {
     const entry = entries[workshop.id];
     if (!entry) return;
 
-    const mortality = Number(entry.mortality) || 0;
+    const mortalityNatural = Number(entry.mortality_natural) || 0;
+    const mortalityHalal = Number(entry.mortality_halal) || 0;
+    const mortality = mortalityNatural + mortalityHalal;
     const feedBags = Number(entry.feed) || 0;
     const waterLiters = Number(entry.water) || 0;
+    const weightVal = entry.weight ? parseFloat(entry.weight) : null;
+    const medicineId = entry.medicine_id || null;
+    const dosageVal = entry.dosage || '';
 
-    if (mortality === 0 && feedBags === 0 && waterLiters === 0) {
+    if (mortality === 0 && feedBags === 0 && waterLiters === 0 && !weightVal && !medicineId) {
       alert('Введите хотя бы одно значение');
       return;
     }
@@ -107,18 +120,29 @@ export default function DailyEntryPage() {
       const { data: { user } } = await supabase.auth.getUser();
 
       if (existingLog) {
-        // Обновить существующую запись — суммировать
-        const newMortality = (existingLog.mortality || 0) + mortality;
+        // Обновить существующую запись — суммировать числовые поля
+        const newMortalityNatural = (existingLog.mortality_natural || 0) + mortalityNatural;
+        const newMortalityHalal = (existingLog.mortality_halal || 0) + mortalityHalal;
+        const newMortality = newMortalityNatural + newMortalityHalal;
         const newFeed = (existingLog.daily_feed || 0) + feedBags;
         const newWater = (existingLog.water_consumption || 0) + waterLiters;
 
+        const updateData = {
+          mortality: newMortality,
+          mortality_natural: newMortalityNatural,
+          mortality_halal: newMortalityHalal,
+          daily_feed: newFeed,
+          water_consumption: newWater,
+        };
+
+        // Масса и лекарство — перезаписываем (не суммируем)
+        if (weightVal !== null) updateData.weight = weightVal;
+        if (medicineId) updateData.medicine_id = medicineId;
+        if (dosageVal) updateData.dosage = dosageVal;
+
         const { error } = await supabase
           .from('daily_logs')
-          .update({
-            mortality: newMortality,
-            daily_feed: newFeed,
-            water_consumption: newWater,
-          })
+          .update(updateData)
           .eq('id', existingLog.id);
 
         if (error) throw error;
@@ -132,8 +156,13 @@ export default function DailyEntryPage() {
             log_date: todayDate,
             age: age,
             mortality: mortality,
+            mortality_natural: mortalityNatural,
+            mortality_halal: mortalityHalal,
             daily_feed: feedBags,
             water_consumption: waterLiters,
+            weight: weightVal,
+            medicine_id: medicineId,
+            dosage: dosageVal || null,
             user_id: user.id,
           }]);
 
@@ -143,7 +172,11 @@ export default function DailyEntryPage() {
       // Очистить форму ввода
       setEntries(prev => ({
         ...prev,
-        [workshop.id]: { mortality: '', feed: '', water: '' }
+        [workshop.id]: {
+          mortality_natural: '', mortality_halal: '',
+          feed: '', water: '', weight: '',
+          medicine_id: '', dosage: ''
+        }
       }));
 
       // Синхронизация "Общей партии"
@@ -196,6 +229,7 @@ export default function DailyEntryPage() {
               isSubmitting={submitting[w.id]}
               age={getAge(w.activeBatch.start_date)}
               todayDate={todayDate}
+              medicines={medicines}
             />
           ))}
         </div>
@@ -205,17 +239,21 @@ export default function DailyEntryPage() {
 }
 
 // --- Карточка ввода для одного цеха ---
-function WorkshopEntryCard({ workshop, todayLog, entry, onUpdate, onSubmit, isSubmitting, age, todayDate }) {
+function WorkshopEntryCard({ workshop, todayLog, entry, onUpdate, onSubmit, isSubmitting, age, todayDate, medicines }) {
   const batch = workshop.activeBatch;
   const norm = getNormForDay(age);
 
   // Текущие итоги за день
+  const currentMortalityNatural = todayLog?.mortality_natural || 0;
+  const currentMortalityHalal = todayLog?.mortality_halal || 0;
   const currentMortality = todayLog?.mortality || 0;
   const currentFeed = todayLog?.daily_feed || 0;
   const currentWater = todayLog?.water_consumption || 0;
+  const currentWeight = todayLog?.weight || null;
+  const currentMedicine = todayLog?.medicine?.name || null;
+  const currentDosage = todayLog?.dosage || null;
 
-  // Справочно — масса и корм на голову (если есть данные)
-  const hasData = currentMortality > 0 || currentFeed > 0 || currentWater > 0;
+  const hasData = currentMortality > 0 || currentFeed > 0 || currentWater > 0 || currentWeight || currentMedicine;
 
   return (
     <div style={{
@@ -244,11 +282,14 @@ function WorkshopEntryCard({ workshop, todayLog, entry, onUpdate, onSubmit, isSu
         {/* Текущие итоги за день */}
         {hasData && (
           <div style={{
-            display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap',
+            display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap',
           }}>
             <div style={{ ...statBox, borderColor: '#dc354530' }}>
               <div style={{ fontSize: 11, color: '#888' }}>💀 Падёж сегодня</div>
               <div style={{ fontSize: 20, fontWeight: 'bold', color: '#dc3545' }}>{currentMortality} гол.</div>
+              <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
+                🕊 Ест.: {currentMortalityNatural} · ☪ Хал.: {currentMortalityHalal}
+              </div>
             </div>
             <div style={{ ...statBox, borderColor: '#fd7e1430' }}>
               <div style={{ fontSize: 11, color: '#888' }}>🌾 Корм сегодня</div>
@@ -259,23 +300,47 @@ function WorkshopEntryCard({ workshop, todayLog, entry, onUpdate, onSubmit, isSu
               <div style={{ fontSize: 11, color: '#888' }}>💧 Вода сегодня</div>
               <div style={{ fontSize: 20, fontWeight: 'bold', color: '#007bff' }}>{currentWater} л</div>
             </div>
+            {currentWeight && (
+              <div style={{ ...statBox, borderColor: '#28a74530' }}>
+                <div style={{ fontSize: 11, color: '#888' }}>⚖️ Масса</div>
+                <div style={{ fontSize: 20, fontWeight: 'bold', color: '#28a745' }}>{currentWeight} г</div>
+              </div>
+            )}
+            {currentMedicine && (
+              <div style={{ ...statBox, borderColor: '#6f42c130' }}>
+                <div style={{ fontSize: 11, color: '#888' }}>💊 Лекарство</div>
+                <div style={{ fontSize: 14, fontWeight: 'bold', color: '#6f42c1' }}>{currentMedicine}</div>
+                {currentDosage && <div style={{ fontSize: 11, color: '#999' }}>Доза: {currentDosage}</div>}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Форма ввода */}
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div style={{ flex: '1 1 120px', minWidth: 100 }}>
-            <label style={labelStyle}>💀 Падёж (гол.)</label>
+        {/* Форма ввода — Падёж */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 8 }}>
+          <div style={{ flex: '1 1 110px', minWidth: 95 }}>
+            <label style={labelStyle}>🕊 Падёж ест. (гол.)</label>
             <input
               type="number"
-              value={entry.mortality || ''}
-              onChange={e => onUpdate('mortality', e.target.value)}
+              value={entry.mortality_natural || ''}
+              onChange={e => onUpdate('mortality_natural', e.target.value)}
               placeholder="0"
               min="0"
               style={inputStyle}
             />
           </div>
-          <div style={{ flex: '1 1 120px', minWidth: 100 }}>
+          <div style={{ flex: '1 1 110px', minWidth: 95 }}>
+            <label style={labelStyle}>☪ Падёж халяль (гол.)</label>
+            <input
+              type="number"
+              value={entry.mortality_halal || ''}
+              onChange={e => onUpdate('mortality_halal', e.target.value)}
+              placeholder="0"
+              min="0"
+              style={inputStyle}
+            />
+          </div>
+          <div style={{ flex: '1 1 110px', minWidth: 95 }}>
             <label style={labelStyle}>🌾 Корм (мешков)</label>
             <input
               type="number"
@@ -287,7 +352,7 @@ function WorkshopEntryCard({ workshop, todayLog, entry, onUpdate, onSubmit, isSu
               style={inputStyle}
             />
           </div>
-          <div style={{ flex: '1 1 120px', minWidth: 100 }}>
+          <div style={{ flex: '1 1 110px', minWidth: 95 }}>
             <label style={labelStyle}>💧 Вода (литров)</label>
             <input
               type="number"
@@ -296,6 +361,44 @@ function WorkshopEntryCard({ workshop, todayLog, entry, onUpdate, onSubmit, isSu
               onChange={e => onUpdate('water', e.target.value)}
               placeholder="0"
               min="0"
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
+        {/* Форма ввода — Масса, Лекарство */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 110px', minWidth: 95 }}>
+            <label style={labelStyle}>⚖️ Масса (г/гол)</label>
+            <input
+              type="number"
+              value={entry.weight || ''}
+              onChange={e => onUpdate('weight', e.target.value)}
+              placeholder="г"
+              min="0"
+              style={inputStyle}
+            />
+          </div>
+          <div style={{ flex: '2 1 160px', minWidth: 130 }}>
+            <label style={labelStyle}>💊 Лекарство</label>
+            <select
+              value={entry.medicine_id || ''}
+              onChange={e => onUpdate('medicine_id', e.target.value)}
+              style={{ ...inputStyle, background: '#fff' }}
+            >
+              <option value="">-- нет --</option>
+              {medicines.map(med => (
+                <option key={med.id} value={med.id}>{med.name}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ flex: '1 1 100px', minWidth: 80 }}>
+            <label style={labelStyle}>💊 Доза</label>
+            <input
+              type="text"
+              value={entry.dosage || ''}
+              onChange={e => onUpdate('dosage', e.target.value)}
+              placeholder="доза"
               style={inputStyle}
             />
           </div>
@@ -317,7 +420,7 @@ function WorkshopEntryCard({ workshop, todayLog, entry, onUpdate, onSubmit, isSu
 
         {/* Подсказка */}
         <p style={{ fontSize: 11, color: '#bbb', marginTop: 8 }}>
-          Данные суммируются с уже введёнными за {todayDate}. Запись автоматически попадает в журнал партии.
+          Падёж, корм и вода суммируются с уже введёнными за {todayDate}. Масса и лекарство перезаписываются.
         </p>
       </div>
     </div>

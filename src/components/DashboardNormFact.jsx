@@ -81,6 +81,11 @@ export default function DashboardNormFact({ logs, initialBirds, historicalBatche
           <div className="bg-white p-4 rounded-lg shadow-md border">
             <h4 className="text-lg font-semibold mb-2">💀 Падёж (накопительный)</h4>
             <p className="text-sm text-gray-600">Пало: <strong className="text-gray-800">{mortality.totalDead} голов ({mortality.factPercent}%)</strong></p>
+            {(mortality.totalNatural > 0 || mortality.totalHalal > 0) && (
+              <p className="text-xs text-gray-500 mb-1">
+                Ест: <strong>{mortality.totalNatural}</strong> · Хал: <strong>{mortality.totalHalal}</strong>
+              </p>
+            )}
             <p className="text-sm text-gray-600">Норма ROSS-308: до <strong className="text-gray-800">{mortality.normPercent}%</strong></p>
             <p className="text-sm font-bold mt-1" style={{ color: STATUS_COLOR[mortality.status] }}>
               {mortality.status === 'ok'       && '✅ В норме'}

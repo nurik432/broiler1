@@ -60,13 +60,15 @@ export async function syncSummaryBatchLog(logDate, userId) {
         const activeBatchIds = activeBatches.map(b => b.id);
         const { data: logs, error: logsErr } = await supabase
             .from('daily_logs')
-            .select('mortality, daily_feed, water_consumption, weight, age')
+            .select('mortality, mortality_natural, mortality_halal, daily_feed, water_consumption, weight, age')
             .in('batch_id', activeBatchIds)
             .eq('log_date', logDate);
 
         if (logsErr) throw logsErr;
 
         let totalMort = 0;
+        let totalMortNatural = 0;
+        let totalMortHalal = 0;
         let totalFeed = 0;
         let totalWater = 0;
         let maxAge = 0;
@@ -76,6 +78,8 @@ export async function syncSummaryBatchLog(logDate, userId) {
         if (logs) {
             logs.forEach(l => {
                 totalMort += (l.mortality || 0);
+                totalMortNatural += (l.mortality_natural || 0);
+                totalMortHalal += (l.mortality_halal || 0);
                 totalFeed += (l.daily_feed || 0);
                 totalWater += (l.water_consumption || 0);
                 if (l.age && l.age > maxAge) maxAge = l.age;
@@ -106,6 +110,8 @@ export async function syncSummaryBatchLog(logDate, userId) {
                 .from('daily_logs')
                 .update({
                     mortality: totalMort,
+                    mortality_natural: totalMortNatural,
+                    mortality_halal: totalMortHalal,
                     daily_feed: totalFeed,
                     water_consumption: totalWater,
                     weight: avgWeight,
@@ -120,6 +126,8 @@ export async function syncSummaryBatchLog(logDate, userId) {
                     log_date: logDate,
                     age: maxAge || 1,
                     mortality: totalMort,
+                    mortality_natural: totalMortNatural,
+                    mortality_halal: totalMortHalal,
                     daily_feed: totalFeed,
                     water_consumption: totalWater,
                     weight: avgWeight,

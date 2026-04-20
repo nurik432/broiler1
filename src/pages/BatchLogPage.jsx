@@ -40,7 +40,8 @@ const JournalTable = ({ logs, batch, medicines, fetchData }) => {
         setEditingId(log.id);
         setEditFormData({
             log_date: log.log_date,
-            mortality: log.mortality,
+            mortality_natural: log.mortality_natural || '',
+            mortality_halal: log.mortality_halal || '',
             water_consumption: log.water_consumption || '',
             medicine_id: log.medicine_id || '',
             dosage: log.dosage || '',
@@ -53,7 +54,9 @@ const JournalTable = ({ logs, batch, medicines, fetchData }) => {
         const { error } = await supabase.from('daily_logs').update({
             ...editFormData,
             age,
-            mortality: Number(editFormData.mortality) || 0,
+            mortality: (Number(editFormData.mortality_natural) || 0) + (Number(editFormData.mortality_halal) || 0),
+            mortality_natural: Number(editFormData.mortality_natural) || 0,
+            mortality_halal: Number(editFormData.mortality_halal) || 0,
             water_consumption: Number(editFormData.water_consumption) || null,
             weight: editFormData.weight ? parseFloat(editFormData.weight) : null,
             daily_feed: editFormData.daily_feed ? parseFloat(editFormData.daily_feed) : null,
@@ -87,7 +90,7 @@ const JournalTable = ({ logs, batch, medicines, fetchData }) => {
                     <tr>
                         <th className="px-3 py-3">Дата / Время</th>
                         <th className="px-3 py-3">Возр.</th>
-                        <th className="px-3 py-3">Падеж</th>
+                        <th className="px-3 py-3">Падеж (Ест/Хал)</th>
                         <th className="px-3 py-3">Масса, г</th>
                         <th className="px-3 py-3">Вода, л (мл/гол)</th>
                         <th className="px-3 py-3">Корм, мешк. (г/гол)</th>
@@ -103,7 +106,12 @@ const JournalTable = ({ logs, batch, medicines, fetchData }) => {
                                 <>
                                     <td className="p-2"><input type="date" value={editFormData.log_date} onChange={e => setEditFormData({...editFormData, log_date: e.target.value})} className="p-1 border rounded w-full"/></td>
                                     <td className="px-3 py-4">{calculateAge(batch.start_date, editFormData.log_date)}</td>
-                                    <td className="p-2"><input type="number" value={editFormData.mortality} onChange={e => setEditFormData({...editFormData, mortality: e.target.value})} className="p-1 border rounded w-16"/></td>
+                                    <td className="p-2">
+                                        <div className="flex gap-1">
+                                            <input type="number" value={editFormData.mortality_natural} onChange={e => setEditFormData({...editFormData, mortality_natural: e.target.value})} placeholder="Ест" className="p-1 border rounded w-12 text-xs" />
+                                            <input type="number" value={editFormData.mortality_halal} onChange={e => setEditFormData({...editFormData, mortality_halal: e.target.value})} placeholder="Хал" className="p-1 border rounded w-12 text-xs" />
+                                        </div>
+                                    </td>
                                     <td className="p-2"><input type="number" value={editFormData.weight} onChange={e => setEditFormData({...editFormData, weight: e.target.value})} placeholder="г/гол" className="p-1 border rounded w-20"/></td>
                                     <td className="p-2"><input type="number" step="0.1" value={editFormData.water_consumption} onChange={e => setEditFormData({...editFormData, water_consumption: e.target.value})} placeholder="литров" className="p-1 border rounded w-20"/></td>
                                     <td className="p-2"><input type="number" step="0.1" value={editFormData.daily_feed} onChange={e => setEditFormData({...editFormData, daily_feed: e.target.value})} placeholder="мешков" className="p-1 border rounded w-20"/></td>
@@ -115,7 +123,12 @@ const JournalTable = ({ logs, batch, medicines, fetchData }) => {
                                 <>
                                     <td className="px-3 py-4"><p className="font-medium">{new Date(log.log_date).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p></td>
                                     <td className="px-3 py-4">{log.age}</td>
-                                    <td className="px-3 py-4 text-red-600 font-semibold">{log.mortality}</td>
+                                    <td className="px-3 py-4">
+                                        <div className="text-red-600 font-semibold">{log.mortality}</div>
+                                        {(log.mortality_natural > 0 || log.mortality_halal > 0) && (
+                                            <div className="text-xs text-gray-500">Ест: {log.mortality_natural || 0} | Хал: {log.mortality_halal || 0}</div>
+                                        )}
+                                    </td>
                                     <td className="px-3 py-4">{log.weight ?? '–'}</td>
                                     <td className="px-3 py-4">
                                         {log.water_consumption ? (
@@ -207,7 +220,8 @@ function BatchLogPage() {
     const [historicalBatches, setHistoricalBatches] = useState([]);
     const [historicalLogs, setHistoricalLogs] = useState([]);
     const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10));
-    const [mortality, setMortality] = useState('');
+    const [mortalityNatural, setMortalityNatural] = useState('');
+    const [mortalityHalal, setMortalityHalal] = useState('');
     const [medicineId, setMedicineId] = useState('');
     const [dosage, setDosage] = useState('');
     const [water, setWater] = useState('');
@@ -294,11 +308,12 @@ function BatchLogPage() {
         const currentWeek = Math.ceil(currentAge / 7);
         const normPercent = getWeekMortalityNorm(currentWeek);
         const allowedDaily = Math.round((batch.initial_quantity * normPercent / 100) / (currentWeek * 7));
+        const totalM = (Number(mortalityNatural) || 0) + (Number(mortalityHalal) || 0);
         return {
             normLabel: `~${allowedDaily} гол/сут (${normPercent}%/нед)`,
             deviation: null,
             percent: null,
-            status: mortality && Number(mortality) > allowedDaily * 2 ? 'critical' : mortality && Number(mortality) > allowedDaily ? 'warning' : 'ok',
+            status: totalM > allowedDaily * 2 ? 'critical' : totalM > allowedDaily ? 'warning' : 'ok',
         };
     };
 
@@ -326,7 +341,9 @@ function BatchLogPage() {
             batch_id: batchId,
             log_date: logDate,
             age: Math.ceil(age / (1000 * 3600 * 24)),
-            mortality: Number(mortality) || 0,
+            mortality: (Number(mortalityNatural) || 0) + (Number(mortalityHalal) || 0),
+            mortality_natural: Number(mortalityNatural) || 0,
+            mortality_halal: Number(mortalityHalal) || 0,
             medicine_id: medicineId || null,
             dosage,
             water_consumption: Number(water) || null,
@@ -336,7 +353,7 @@ function BatchLogPage() {
         }]);
         if (error) { alert(error.message); }
         else { 
-            setMortality(''); setMedicineId(''); setDosage(''); setWater(''); setWeight(''); setDailyFeed(''); 
+            setMortalityNatural(''); setMortalityHalal(''); setMedicineId(''); setDosage(''); setWater(''); setWeight(''); setDailyFeed(''); 
             await fetchAllBatchData(); 
             if (!batch?.is_summary) {
                 await syncSummaryBatchLog(logDate, user.id);
@@ -373,9 +390,15 @@ function BatchLogPage() {
                     {activeTab === 'journal' && (<>{batch.is_active && (<div className="bg-gray-50 p-4 rounded-lg mb-6"><h3 className="text-xl font-semibold mb-4">Добавить запись</h3><form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div><label>Дата</label><input type="date" value={logDate} onChange={e => setLogDate(e.target.value)} required className="mt-1 w-full p-2 border rounded"/></div>
 
-                        <div>
-                            <label className="flex items-center flex-wrap gap-1">Падеж <NormIndicator result={getMortalityHint()} /></label>
-                            <input type="number" value={mortality} onChange={e => setMortality(e.target.value)} required className="mt-1 w-full p-2 border rounded"/>
+                        <div className="flex gap-2">
+                            <div className="flex-1">
+                                <label className="flex items-center flex-wrap gap-1">Падеж ест. <NormIndicator result={getMortalityHint()} /></label>
+                                <input type="number" value={mortalityNatural} onChange={e => setMortalityNatural(e.target.value)} className="mt-1 w-full p-2 border rounded"/>
+                            </div>
+                            <div className="flex-1">
+                                <label className="flex items-center flex-wrap gap-1">Падеж хал.</label>
+                                <input type="number" value={mortalityHalal} onChange={e => setMortalityHalal(e.target.value)} className="mt-1 w-full p-2 border rounded"/>
+                            </div>
                         </div>
 
                         <div>

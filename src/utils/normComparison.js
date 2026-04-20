@@ -64,6 +64,8 @@ export function compareWithNorm(day, field, value) {
 export function calcMortality(logs, initialBirds) {
   if (!logs?.length || !initialBirds) return null;
   const totalDead    = logs.reduce((sum, r) => sum + (r.mortality || 0), 0);
+  const totalNatural = logs.reduce((sum, r) => sum + (r.mortality_natural || 0), 0);
+  const totalHalal   = logs.reduce((sum, r) => sum + (r.mortality_halal || 0), 0);
   const lastAge      = Math.max(...logs.map(r => r.age));
   const currentWeek  = Math.ceil(lastAge / 7);
   const factPercent  = (totalDead / initialBirds) * 100;
@@ -73,6 +75,8 @@ export function calcMortality(logs, initialBirds) {
                      : 'critical';
   return {
     totalDead,
+    totalNatural,
+    totalHalal,
     factPercent: factPercent.toFixed(2),
     normPercent: normPercent.toFixed(1),
     status,
