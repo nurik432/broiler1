@@ -209,6 +209,7 @@ function SalariesPage() {
     const [editFixedSum, setEditFixedSum] = useState('');
     const [editFirstDaysN, setEditFirstDaysN] = useState('');
     const [editAbsentDays, setEditAbsentDays] = useState('');
+    const [editEndDate, setEditEndDate] = useState('');
 
     const handleStartEdit = () => {
         if (selectedEmployee) {
@@ -220,6 +221,7 @@ function SalariesPage() {
             setEditFixedSum(selectedEmployee.fixed_sum ?? '');
             setEditFirstDaysN(selectedEmployee.first_days_n ?? '');
             setEditAbsentDays(selectedEmployee.absent_days ?? 0);
+            setEditEndDate(selectedEmployee.end_date || '');
             setIsEditingEmployee(true);
         }
     };
@@ -239,6 +241,7 @@ function SalariesPage() {
                 full_name: editName,
                 position: editPosition,
                 start_date: editStartDate,
+                end_date: editEndDate || null,
                 batch_id: editBatchId || null,
                 rate: Number(editRate) || 0,
                 fixed_sum: Number(editFixedSum) || 0,
@@ -256,6 +259,7 @@ function SalariesPage() {
                 full_name: editName,
                 position: editPosition,
                 start_date: editStartDate,
+                end_date: editEndDate || null,
                 batch_id: editBatchId || null,
                 rate: Number(editRate) || 0,
                 fixed_sum: Number(editFixedSum) || 0,
@@ -695,6 +699,22 @@ function SalariesPage() {
                                             />
                                         </div>
                                         <div>
+                                            <label className="text-sm font-medium text-red-600">Дата увольнения</label>
+                                            <input
+                                                type="date"
+                                                value={editEndDate}
+                                                onChange={e => setEditEndDate(e.target.value)}
+                                                className="w-full p-2 border border-red-200 rounded mt-1"
+                                            />
+                                            {editEndDate && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setEditEndDate('')}
+                                                    className="text-xs text-red-500 hover:underline mt-1"
+                                                >Очистить дату увольнения</button>
+                                            )}
+                                        </div>
+                                        <div>
                                             <label className="text-sm font-medium text-indigo-700">Партия</label>
                                             <select
                                                 value={editBatchId}
@@ -724,7 +744,7 @@ function SalariesPage() {
                                             />
                                         </div>
                                         <div>
-                                            <label className="text-sm font-medium">Фикс. сумма</label>
+                                            <label className="text-sm font-medium">Ставка первых N дн.</label>
                                             <input
                                                 type="number"
                                                 step="0.01"
@@ -831,41 +851,92 @@ function SalariesPage() {
                                 )
                             )}
 
-                            {/* Расчёт зарплаты */}
+                            {/* Расчётный лист */}
                             {selectedEmployee?.rate > 0 || selectedEmployee?.fixed_sum > 0 ? (() => {
                                 const calc = calculateSalary(selectedEmployee, selectedEmployee.broiler_batches || {});
                                 const paid = salaryTotals.totalAll;
                                 const remaining = calc.salary - paid;
+                                const emp = selectedEmployee;
+                                const firstDaysN = Math.max(Number(emp.first_days_n) || 0, 0);
+                                const fixedSum = Number(emp.fixed_sum) || 0;
+                                const rate = Number(emp.rate) || 0;
+                                const absentDays = Number(emp.absent_days) || 0;
+                                const daysAtFixed = Math.min(calc.effectiveDays, firstDaysN);
+                                const daysAtRate = Math.max(calc.effectiveDays - firstDaysN, 0);
+                                const sumFixed = fixedSum * daysAtFixed;
+                                const sumRate = rate * daysAtRate;
+
                                 return (
                                     <div className="mb-6 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg border border-emerald-200">
-                                        <h3 className="font-bold text-lg mb-3 text-gray-800">💰 Расчёт зарплаты</h3>
-                                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-2">
-                                            <div className="bg-white p-3 rounded-md shadow-sm">
-                                                <p className="text-xs text-gray-500">Всего дней</p>
-                                                <p className="text-lg font-bold text-gray-700">{calc.totalDays}</p>
+                                        <h3 className="font-bold text-lg mb-3 text-gray-800">📋 Расчётный лист</h3>
+
+                                        {/* Параметры */}
+                                        <div className="bg-white rounded-md p-3 mb-3 text-sm">
+                                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-gray-600">
+                                                <div>📅 Начало: <span className="font-semibold text-gray-800">{new Date(emp.start_date).toLocaleDateString()}</span></div>
+                                                <div>📅 Конец: <span className="font-semibold text-gray-800">
+                                                    {emp.end_date ? new Date(emp.end_date).toLocaleDateString() : (emp.broiler_batches?.batch_end ? new Date(emp.broiler_batches.batch_end).toLocaleDateString() : 'сегодня')}
+                                                </span></div>
+                                                <div>🚫 Пропуски: <span className="font-semibold text-gray-800">{absentDays} дн.</span></div>
+                                                <div>📆 Рабочих дней: <span className="font-semibold text-gray-800">{calc.effectiveDays} из {calc.totalDays}</span></div>
                                             </div>
-                                            <div className="bg-white p-3 rounded-md shadow-sm">
-                                                <p className="text-xs text-gray-500">Рабочих дней</p>
-                                                <p className="text-lg font-bold text-gray-700">{calc.effectiveDays}</p>
-                                            </div>
-                                            <div className="bg-white p-3 rounded-md shadow-sm">
+                                        </div>
+
+                                        {/* Детализация расчёта */}
+                                        <table className="w-full text-sm mb-3">
+                                            <thead>
+                                                <tr className="text-left text-gray-500 border-b">
+                                                    <th className="py-1">Описание</th>
+                                                    <th className="py-1 text-center">Дней</th>
+                                                    <th className="py-1 text-center">Ставка</th>
+                                                    <th className="py-1 text-right">Сумма</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {firstDaysN > 0 && (
+                                                    <tr className="border-b border-gray-100">
+                                                        <td className="py-2">Первые {firstDaysN} дней (начальная ставка)</td>
+                                                        <td className="py-2 text-center">{daysAtFixed}</td>
+                                                        <td className="py-2 text-center">{fixedSum}</td>
+                                                        <td className="py-2 text-right font-medium">{formatCurrency(sumFixed)}</td>
+                                                    </tr>
+                                                )}
+                                                {daysAtRate > 0 && (
+                                                    <tr className="border-b border-gray-100">
+                                                        <td className="py-2">Остальные дни (основная ставка)</td>
+                                                        <td className="py-2 text-center">{daysAtRate}</td>
+                                                        <td className="py-2 text-center">{rate}</td>
+                                                        <td className="py-2 text-right font-medium">{formatCurrency(sumRate)}</td>
+                                                    </tr>
+                                                )}
+                                                {firstDaysN <= 0 && (
+                                                    <tr className="border-b border-gray-100">
+                                                        <td className="py-2">Все дни (ставка/день)</td>
+                                                        <td className="py-2 text-center">{calc.effectiveDays}</td>
+                                                        <td className="py-2 text-center">{rate}</td>
+                                                        <td className="py-2 text-right font-medium">{formatCurrency(calc.salary)}</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+
+                                        {/* Итоги */}
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                            <div className="bg-white p-3 rounded-md shadow-sm text-center">
                                                 <p className="text-xs text-gray-500">Начислено</p>
-                                                <p className="text-lg font-bold text-emerald-600">{formatCurrency(calc.salary)}</p>
+                                                <p className="text-xl font-bold text-emerald-600">{formatCurrency(calc.salary)}</p>
                                             </div>
-                                            <div className="bg-white p-3 rounded-md shadow-sm">
+                                            <div className="bg-white p-3 rounded-md shadow-sm text-center">
                                                 <p className="text-xs text-gray-500">Выплачено</p>
-                                                <p className="text-lg font-bold text-blue-600">{formatCurrency(paid)}</p>
+                                                <p className="text-xl font-bold text-blue-600">{formatCurrency(paid)}</p>
                                             </div>
-                                            <div className="bg-white p-3 rounded-md shadow-sm">
-                                                <p className="text-xs text-gray-500">Остаток</p>
-                                                <p className={`text-lg font-bold ${remaining >= 0 ? 'text-orange-600' : 'text-red-600'}`}>
+                                            <div className="bg-white p-3 rounded-md shadow-sm text-center">
+                                                <p className="text-xs text-gray-500">Остаток к выплате</p>
+                                                <p className={`text-xl font-bold ${remaining >= 0 ? 'text-orange-600' : 'text-red-600'}`}>
                                                     {formatCurrency(remaining)}
                                                 </p>
                                             </div>
                                         </div>
-                                        <p className="text-xs text-gray-400 mt-1">
-                                            Ставка: {selectedEmployee.rate} / Фикс: {selectedEmployee.fixed_sum} за {selectedEmployee.first_days_n} дн. / Пропуски: {selectedEmployee.absent_days ?? 0} дн.
-                                        </p>
                                     </div>
                                 );
                             })() : null}

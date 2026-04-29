@@ -5,8 +5,8 @@
  * @param {string} employee.start_date       — дата начала работы
  * @param {string|null} employee.end_date    — дата увольнения (dismissal)
  * @param {number} employee.absent_days      — дней отсутствия
- * @param {number} employee.first_days_n     — кол-во первых дней по фикс. ставке
- * @param {number} employee.fixed_sum        — фикс. сумма за первые N дней
+ * @param {number} employee.first_days_n     — кол-во первых дней по начальной ставке
+ * @param {number} employee.fixed_sum        — дневная ставка за первые N дней
  * @param {number} employee.rate             — дневная ставка после первых N дней
  *
  * @param {Object} batch
@@ -48,13 +48,16 @@ export function calculateSalary(employee, batch) {
     }
 
     // 6. Основной расчёт
+    //    fixed_sum — дневная ставка за первые N дней
+    //    rate      — дневная ставка за остальные дни
+    //    Пример: 40 дн, первые 15 по 100, остальные по 120 → 15×100 + 25×120 = 4500
     let salary;
     if (effectiveDays <= firstDaysN) {
-        // Ещё в пределах первых N дней — пропорция от фикс. суммы
-        salary = (fixedSum / firstDaysN) * effectiveDays;
+        // Ещё в пределах первых N дней
+        salary = fixedSum * effectiveDays;
     } else {
-        // Фикс. сумма + остаток по ставке
-        salary = fixedSum + (effectiveDays - firstDaysN) * rate;
+        // Первые N дней по fixedSum + остаток по rate
+        salary = fixedSum * firstDaysN + (effectiveDays - firstDaysN) * rate;
     }
 
     return { salary: Math.round(salary * 100) / 100, totalDays, effectiveDays };
