@@ -206,10 +206,9 @@ function SalariesPage() {
 
     // Состояния для полей расчёта зарплаты
     const [editRate, setEditRate] = useState('');
-    const [editFixedSum, setEditFixedSum] = useState('');
-    const [editFirstDaysN, setEditFirstDaysN] = useState('');
     const [editAbsentDays, setEditAbsentDays] = useState('');
     const [editEndDate, setEditEndDate] = useState('');
+    const [editSalaryTiers, setEditSalaryTiers] = useState([]);
 
     const handleStartEdit = () => {
         if (selectedEmployee) {
@@ -218,10 +217,12 @@ function SalariesPage() {
             setEditStartDate(selectedEmployee.start_date || new Date().toISOString().slice(0, 10));
             setEditBatchId(selectedEmployee.batch_id || '');
             setEditRate(selectedEmployee.rate ?? '');
-            setEditFixedSum(selectedEmployee.fixed_sum ?? '');
-            setEditFirstDaysN(selectedEmployee.first_days_n ?? '');
             setEditAbsentDays(selectedEmployee.absent_days ?? 0);
             setEditEndDate(selectedEmployee.end_date || '');
+            const tiers = Array.isArray(selectedEmployee.salary_tiers) && selectedEmployee.salary_tiers.length > 0
+                ? selectedEmployee.salary_tiers
+                : (Number(selectedEmployee.first_days_n) > 0 ? [{ days: selectedEmployee.first_days_n, rate: selectedEmployee.fixed_sum || 0 }] : []);
+            setEditSalaryTiers(tiers.map(t => ({ days: String(t.days || ''), rate: String(t.rate || '') })));
             setIsEditingEmployee(true);
         }
     };
@@ -244,9 +245,8 @@ function SalariesPage() {
                 end_date: editEndDate || null,
                 batch_id: editBatchId || null,
                 rate: Number(editRate) || 0,
-                fixed_sum: Number(editFixedSum) || 0,
-                first_days_n: Number(editFirstDaysN) || 0,
-                absent_days: Number(editAbsentDays) || 0
+                absent_days: Number(editAbsentDays) || 0,
+                salary_tiers: editSalaryTiers.filter(t => Number(t.days) > 0).map(t => ({ days: Number(t.days), rate: Number(t.rate) || 0 }))
             })
             .eq('id', selectedEmployee.id);
 
@@ -262,9 +262,8 @@ function SalariesPage() {
                 end_date: editEndDate || null,
                 batch_id: editBatchId || null,
                 rate: Number(editRate) || 0,
-                fixed_sum: Number(editFixedSum) || 0,
-                first_days_n: Number(editFirstDaysN) || 0,
-                absent_days: Number(editAbsentDays) || 0
+                absent_days: Number(editAbsentDays) || 0,
+                salary_tiers: editSalaryTiers.filter(t => Number(t.days) > 0).map(t => ({ days: Number(t.days), rate: Number(t.rate) || 0 }))
             }));
             setIsEditingEmployee(false);
         }
@@ -728,57 +727,34 @@ function SalariesPage() {
                                             </select>
                                         </div>
                                     </div>
-                                    {/* Поля расчёта зарплаты */}
                                     <h4 className="font-semibold text-sm text-gray-600 mt-2 mb-1">Параметры расчёта зарплаты</h4>
-                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
                                         <div>
-                                            <label className="text-sm font-medium">Ставка/день</label>
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                min="0"
-                                                value={editRate}
-                                                onChange={e => setEditRate(e.target.value)}
-                                                className="w-full p-2 border rounded mt-1"
-                                                placeholder="0"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-sm font-medium">Ставка первых N дн.</label>
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                min="0"
-                                                value={editFixedSum}
-                                                onChange={e => setEditFixedSum(e.target.value)}
-                                                className="w-full p-2 border rounded mt-1"
-                                                placeholder="0"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="text-sm font-medium">Первые N дней</label>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                value={editFirstDaysN}
-                                                onChange={e => setEditFirstDaysN(e.target.value)}
-                                                className="w-full p-2 border rounded mt-1"
-                                                placeholder="0"
-                                            />
+                                            <label className="text-sm font-medium">Основная ставка/день</label>
+                                            <input type="number" step="0.01" min="0" value={editRate} onChange={e => setEditRate(e.target.value)} className="w-full p-2 border rounded mt-1" placeholder="0" />
+                                            <p className="text-xs text-gray-400 mt-0.5">Ставка после всех ступеней</p>
                                         </div>
                                         <div>
                                             <label className="text-sm font-medium">Дней отсутствия</label>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                value={editAbsentDays}
-                                                onChange={e => setEditAbsentDays(e.target.value)}
-                                                className="w-full p-2 border rounded mt-1"
-                                                placeholder="0"
-                                            />
+                                            <input type="number" min="0" value={editAbsentDays} onChange={e => setEditAbsentDays(e.target.value)} className="w-full p-2 border rounded mt-1" placeholder="0" />
                                         </div>
                                     </div>
-                                    <div className="flex gap-2">
+                                    <div className="mb-4">
+                                        <div className="flex items-center justify-between mb-1">
+                                            <label className="text-sm font-medium text-gray-600">Ступени ставок</label>
+                                            <button type="button" onClick={() => setEditSalaryTiers([...editSalaryTiers, { days: '', rate: '' }])} className="text-xs px-2 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200">+ Добавить ступень</button>
+                                        </div>
+                                        {editSalaryTiers.length === 0 && <p className="text-xs text-gray-400">Нет ступеней — будет только основная ставка</p>}
+                                        {editSalaryTiers.map((tier, i) => (
+                                            <div key={i} className="flex gap-2 items-center mb-1">
+                                                <span className="text-xs text-gray-400 w-4">{i + 1}.</span>
+                                                <input type="number" min="1" value={tier.days} onChange={e => { const t = [...editSalaryTiers]; t[i] = { ...t[i], days: e.target.value }; setEditSalaryTiers(t); }} className="w-24 p-1.5 border rounded text-sm" placeholder="Дней" />
+                                                <span className="text-xs text-gray-400">дн. по</span>
+                                                <input type="number" step="0.01" min="0" value={tier.rate} onChange={e => { const t = [...editSalaryTiers]; t[i] = { ...t[i], rate: e.target.value }; setEditSalaryTiers(t); }} className="w-24 p-1.5 border rounded text-sm" placeholder="Ставка" />
+                                                <button type="button" onClick={() => setEditSalaryTiers(editSalaryTiers.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600 text-sm">✕</button>
+                                            </div>
+                                        ))}
+                                    </div>
                                         <button
                                             type="submit"
                                             disabled={isSavingEdit}
@@ -852,19 +828,12 @@ function SalariesPage() {
                             )}
 
                             {/* Расчётный лист */}
-                            {selectedEmployee?.rate > 0 || selectedEmployee?.fixed_sum > 0 ? (() => {
+                            {selectedEmployee?.rate > 0 || (Array.isArray(selectedEmployee?.salary_tiers) && selectedEmployee.salary_tiers.length > 0) || selectedEmployee?.fixed_sum > 0 ? (() => {
                                 const calc = calculateSalary(selectedEmployee, selectedEmployee.broiler_batches || {});
                                 const paid = salaryTotals.totalAll;
                                 const remaining = calc.salary - paid;
                                 const emp = selectedEmployee;
-                                const firstDaysN = Math.max(Number(emp.first_days_n) || 0, 0);
-                                const fixedSum = Number(emp.fixed_sum) || 0;
-                                const rate = Number(emp.rate) || 0;
                                 const absentDays = Number(emp.absent_days) || 0;
-                                const daysAtFixed = Math.min(calc.effectiveDays, firstDaysN);
-                                const daysAtRate = Math.max(calc.effectiveDays - firstDaysN, 0);
-                                const sumFixed = fixedSum * daysAtFixed;
-                                const sumRate = rate * daysAtRate;
 
                                 return (
                                     <div className="mb-6 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg border border-emerald-200">
@@ -893,30 +862,14 @@ function SalariesPage() {
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {firstDaysN > 0 && (
-                                                    <tr className="border-b border-gray-100">
-                                                        <td className="py-2">Первые {firstDaysN} дней (начальная ставка)</td>
-                                                        <td className="py-2 text-center">{daysAtFixed}</td>
-                                                        <td className="py-2 text-center">{fixedSum}</td>
-                                                        <td className="py-2 text-right font-medium">{formatCurrency(sumFixed)}</td>
+                                                {calc.breakdown.map((row, i) => (
+                                                    <tr key={i} className="border-b border-gray-100">
+                                                        <td className="py-2">{row.label}</td>
+                                                        <td className="py-2 text-center">{row.days}</td>
+                                                        <td className="py-2 text-center">{row.rate}</td>
+                                                        <td className="py-2 text-right font-medium">{formatCurrency(row.sum)}</td>
                                                     </tr>
-                                                )}
-                                                {daysAtRate > 0 && (
-                                                    <tr className="border-b border-gray-100">
-                                                        <td className="py-2">Остальные дни (основная ставка)</td>
-                                                        <td className="py-2 text-center">{daysAtRate}</td>
-                                                        <td className="py-2 text-center">{rate}</td>
-                                                        <td className="py-2 text-right font-medium">{formatCurrency(sumRate)}</td>
-                                                    </tr>
-                                                )}
-                                                {firstDaysN <= 0 && (
-                                                    <tr className="border-b border-gray-100">
-                                                        <td className="py-2">Все дни (ставка/день)</td>
-                                                        <td className="py-2 text-center">{calc.effectiveDays}</td>
-                                                        <td className="py-2 text-center">{rate}</td>
-                                                        <td className="py-2 text-right font-medium">{formatCurrency(calc.salary)}</td>
-                                                    </tr>
-                                                )}
+                                                ))}
                                             </tbody>
                                         </table>
 
