@@ -755,6 +755,7 @@ function SalariesPage() {
                                             </div>
                                         ))}
                                     </div>
+                                    <div className="flex gap-2">
                                         <button
                                             type="submit"
                                             disabled={isSavingEdit}
