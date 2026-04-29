@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
+import { calculateSalary } from '../utils/calculateSalary';
 
 function SalariesPage() {
     const [employees, setEmployees] = useState([]);
@@ -57,7 +58,8 @@ function SalariesPage() {
                 broiler_batches (
                     id,
                     batch_name,
-                    is_active
+                    is_active,
+                    batch_end
                 )
             `)
             .order('full_name');
@@ -202,12 +204,22 @@ function SalariesPage() {
         setIsAddingEmployee(false);
     };
 
+    // Состояния для полей расчёта зарплаты
+    const [editRate, setEditRate] = useState('');
+    const [editFixedSum, setEditFixedSum] = useState('');
+    const [editFirstDaysN, setEditFirstDaysN] = useState('');
+    const [editAbsentDays, setEditAbsentDays] = useState('');
+
     const handleStartEdit = () => {
         if (selectedEmployee) {
             setEditName(selectedEmployee.full_name);
             setEditPosition(selectedEmployee.position || '');
             setEditStartDate(selectedEmployee.start_date || new Date().toISOString().slice(0, 10));
             setEditBatchId(selectedEmployee.batch_id || '');
+            setEditRate(selectedEmployee.rate ?? '');
+            setEditFixedSum(selectedEmployee.fixed_sum ?? '');
+            setEditFirstDaysN(selectedEmployee.first_days_n ?? '');
+            setEditAbsentDays(selectedEmployee.absent_days ?? 0);
             setIsEditingEmployee(true);
         }
     };
@@ -227,7 +239,11 @@ function SalariesPage() {
                 full_name: editName,
                 position: editPosition,
                 start_date: editStartDate,
-                batch_id: editBatchId || null
+                batch_id: editBatchId || null,
+                rate: Number(editRate) || 0,
+                fixed_sum: Number(editFixedSum) || 0,
+                first_days_n: Number(editFirstDaysN) || 0,
+                absent_days: Number(editAbsentDays) || 0
             })
             .eq('id', selectedEmployee.id);
 
@@ -240,7 +256,11 @@ function SalariesPage() {
                 full_name: editName,
                 position: editPosition,
                 start_date: editStartDate,
-                batch_id: editBatchId || null
+                batch_id: editBatchId || null,
+                rate: Number(editRate) || 0,
+                fixed_sum: Number(editFixedSum) || 0,
+                first_days_n: Number(editFirstDaysN) || 0,
+                absent_days: Number(editAbsentDays) || 0
             }));
             setIsEditingEmployee(false);
         }
@@ -688,6 +708,56 @@ function SalariesPage() {
                                             </select>
                                         </div>
                                     </div>
+                                    {/* Поля расчёта зарплаты */}
+                                    <h4 className="font-semibold text-sm text-gray-600 mt-2 mb-1">Параметры расчёта зарплаты</h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
+                                        <div>
+                                            <label className="text-sm font-medium">Ставка/день</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                value={editRate}
+                                                onChange={e => setEditRate(e.target.value)}
+                                                className="w-full p-2 border rounded mt-1"
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium">Фикс. сумма</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                value={editFixedSum}
+                                                onChange={e => setEditFixedSum(e.target.value)}
+                                                className="w-full p-2 border rounded mt-1"
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium">Первые N дней</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={editFirstDaysN}
+                                                onChange={e => setEditFirstDaysN(e.target.value)}
+                                                className="w-full p-2 border rounded mt-1"
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-medium">Дней отсутствия</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={editAbsentDays}
+                                                onChange={e => setEditAbsentDays(e.target.value)}
+                                                className="w-full p-2 border rounded mt-1"
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                    </div>
                                     <div className="flex gap-2">
                                         <button
                                             type="submit"
@@ -760,6 +830,45 @@ function SalariesPage() {
                                     </form>
                                 )
                             )}
+
+                            {/* Расчёт зарплаты */}
+                            {selectedEmployee?.rate > 0 || selectedEmployee?.fixed_sum > 0 ? (() => {
+                                const calc = calculateSalary(selectedEmployee, selectedEmployee.broiler_batches || {});
+                                const paid = salaryTotals.totalAll;
+                                const remaining = calc.salary - paid;
+                                return (
+                                    <div className="mb-6 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg border border-emerald-200">
+                                        <h3 className="font-bold text-lg mb-3 text-gray-800">💰 Расчёт зарплаты</h3>
+                                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-2">
+                                            <div className="bg-white p-3 rounded-md shadow-sm">
+                                                <p className="text-xs text-gray-500">Всего дней</p>
+                                                <p className="text-lg font-bold text-gray-700">{calc.totalDays}</p>
+                                            </div>
+                                            <div className="bg-white p-3 rounded-md shadow-sm">
+                                                <p className="text-xs text-gray-500">Рабочих дней</p>
+                                                <p className="text-lg font-bold text-gray-700">{calc.effectiveDays}</p>
+                                            </div>
+                                            <div className="bg-white p-3 rounded-md shadow-sm">
+                                                <p className="text-xs text-gray-500">Начислено</p>
+                                                <p className="text-lg font-bold text-emerald-600">{formatCurrency(calc.salary)}</p>
+                                            </div>
+                                            <div className="bg-white p-3 rounded-md shadow-sm">
+                                                <p className="text-xs text-gray-500">Выплачено</p>
+                                                <p className="text-lg font-bold text-blue-600">{formatCurrency(paid)}</p>
+                                            </div>
+                                            <div className="bg-white p-3 rounded-md shadow-sm">
+                                                <p className="text-xs text-gray-500">Остаток</p>
+                                                <p className={`text-lg font-bold ${remaining >= 0 ? 'text-orange-600' : 'text-red-600'}`}>
+                                                    {formatCurrency(remaining)}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-gray-400 mt-1">
+                                            Ставка: {selectedEmployee.rate} / Фикс: {selectedEmployee.fixed_sum} за {selectedEmployee.first_days_n} дн. / Пропуски: {selectedEmployee.absent_days ?? 0} дн.
+                                        </p>
+                                    </div>
+                                );
+                            })() : null}
 
                             {/* Итоги */}
                             <div className="mb-6 p-4 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-lg border border-indigo-200">
