@@ -8,7 +8,6 @@ function MedicinesPage() {
     // --- Данные ---
     const [transactions, setTransactions] = useState([]);
     const [medicines, setMedicines] = useState([]);
-    const [summary, setSummary] = useState(null);
     const [loading, setLoading] = useState(true);
 
     // --- Вкладки: purchase / debt / payment / catalog ---
@@ -35,14 +34,13 @@ function MedicinesPage() {
     // --- Загрузка данных ---
     const fetchData = async () => {
         setLoading(true);
-        const [transRes, medsRes, summaryRes] = await Promise.all([
+        const [transRes, medsRes] = await Promise.all([
             supabase
                 .from('medicine_transactions')
                 .select('*, medicine:medicines(name)')
                 .order('transaction_date', { ascending: false })
                 .order('created_at', { ascending: false }),
-            supabase.from('medicines').select('id, name').order('name'),
-            supabase.rpc('get_medicine_summary').single()
+            supabase.from('medicines').select('id, name').order('name')
         ]);
 
         if (transRes.error) console.error('Ошибка транзакций:', transRes.error);
@@ -50,9 +48,6 @@ function MedicinesPage() {
 
         if (medsRes.error) console.error('Ошибка лекарств:', medsRes.error);
         else setMedicines(medsRes.data);
-
-        if (summaryRes.error) console.error('Ошибка сводки:', summaryRes.error);
-        else setSummary(summaryRes.data);
 
         setLoading(false);
     };
@@ -64,10 +59,23 @@ function MedicinesPage() {
         return transactions.filter(t => showHidden ? true : !t.is_hidden);
     }, [transactions, showHidden]);
 
+    // --- Дашборд считается из видимых записей ---
+    const summary = useMemo(() => {
+        const s = { total_purchased: 0, total_debt: 0, total_paid: 0, current_balance: 0 };
+        filteredTransactions.forEach(t => {
+            const amt = Number(t.amount) || 0;
+            if (t.transaction_type === 'purchase') s.total_purchased += amt;
+            else if (t.transaction_type === 'debt') s.total_debt += amt;
+            else if (t.transaction_type === 'payment') s.total_paid += amt;
+        });
+        s.current_balance = s.total_purchased + s.total_debt - s.total_paid;
+        return s;
+    }, [filteredTransactions]);
+
     // --- Вычислим итого по каждому лекарству для дашборда ---
     const perMedicineSummary = useMemo(() => {
         const map = {};
-        transactions.forEach(t => {
+        filteredTransactions.forEach(t => {
             const name = t.medicine?.name || 'Без лекарства';
             if (!map[name]) map[name] = { purchased: 0, debt: 0, paid: 0 };
             if (t.transaction_type === 'purchase') map[name].purchased += Number(t.amount);
@@ -79,7 +87,7 @@ function MedicinesPage() {
             ...data,
             balance: data.purchased + data.debt - data.paid
         }));
-    }, [transactions]);
+    }, [filteredTransactions]);
 
     // --- Добавление покупки / долга ---
     const handleAddTransaction = async (e, type) => {
