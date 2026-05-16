@@ -34,7 +34,7 @@ function Sidebar({ isOpen, setIsOpen }) {
             <span className="mx-4 font-medium">Партии бройлеров</span>
           </NavLink>
           <NavLink to="/medicines" className={({ isActive }) => `${linkClass} ${isActive ? activeLinkClass : 'hover:bg-gray-100'}`} onClick={() => setIsOpen(false)}>
-            <span className="mx-4 font-medium">Каталог лекарств</span>
+            <span className="mx-4 font-medium">💊 Лекарства</span>
           </NavLink>
           <NavLink to="/expenses" className={({ isActive }) => `${linkClass} ${isActive ? activeLinkClass : 'hover:bg-gray-100'}`} onClick={() => setIsOpen(false)}>
             <span className="mx-4 font-medium">Расходы</span>
