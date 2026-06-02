@@ -186,8 +186,8 @@ function MedicinesPage() {
 
     const unitOptions = ['шт', 'мл', 'л', 'гр', 'кг', 'доза', 'упак', 'флакон'];
 
-    // --- Форма покупки / долга (общая) ---
-    const PurchaseDebtForm = ({ type }) => (
+    // Inline helper for rendering purchase/debt form fields
+    const renderPurchaseDebtFields = (type) => (
         <form onSubmit={(e) => handleAddTransaction(e, type)} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
@@ -354,13 +354,13 @@ function MedicinesPage() {
                 {activeTab === 'purchase' && (
                     <>
                         <h2 className="text-xl font-semibold mb-4 text-gray-700">Добавить покупку</h2>
-                        <PurchaseDebtForm type="purchase" />
+                        {renderPurchaseDebtFields('purchase')}
                     </>
                 )}
                 {activeTab === 'debt' && (
                     <>
                         <h2 className="text-xl font-semibold mb-4 text-gray-700">Взять в долг</h2>
-                        <PurchaseDebtForm type="debt" />
+                        {renderPurchaseDebtFields('debt')}
                     </>
                 )}
                 {activeTab === 'payment' && (
