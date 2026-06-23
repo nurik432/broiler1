@@ -24,7 +24,10 @@ export default function CreateEmployeeTab({ activeBatches, fetchPersons, persons
                 personId = existingPerson.id;
             } else {
                 const { data: newPersonData, error: personError } = await supabase.from('persons').insert([
-                    { full_name: newName.trim() }
+                    { 
+                        full_name: newName.trim(),
+                        user_id: user.id 
+                    }
                 ]).select().single();
                 
                 if (personError) throw personError;
