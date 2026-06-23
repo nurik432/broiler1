@@ -18,19 +18,6 @@ export default function Auth() {
     setLoading(false);
   };
 
-  const handleSignup = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    const { error } = await supabase.auth.signUp({ email, password });
-
-    if (error) {
-      alert(error.error_description || error.message);
-    } else {
-      alert('Проверьте почту для подтверждения регистрации!');
-    }
-    setLoading(false);
-  }
-
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-50">
       <div className="w-full max-w-md p-8 space-y-8 bg-white shadow-lg rounded-xl">
@@ -69,20 +56,13 @@ export default function Auth() {
             </div>
           </div>
 
-          <div className="flex flex-col space-y-2">
+          <div>
             <button
               type="submit"
               className="w-full py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400"
               disabled={loading}
             >
               {loading ? 'Вход...' : 'Войти'}
-            </button>
-             <button
-              onClick={handleSignup}
-              className="w-full py-2 text-sm font-medium text-indigo-700 bg-indigo-100 rounded-md hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400"
-              disabled={loading}
-            >
-              {loading ? '...' : 'Зарегистрироваться'}
             </button>
           </div>
         </form>
