@@ -54,7 +54,9 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
             }
             if (selectedEmployee?.start_date) {
                 const salaryDate = new Date(salary.payment_date);
+                salaryDate.setHours(0, 0, 0, 0);
                 const startDate = new Date(selectedEmployee.start_date);
+                startDate.setHours(0, 0, 0, 0);
                 if (salaryDate < startDate) return false;
             }
             return true;
@@ -96,7 +98,9 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
         
         if (selectedEmployee.start_date) {
             const payDate = new Date(paymentDate);
+            payDate.setHours(0, 0, 0, 0);
             const startDate = new Date(selectedEmployee.start_date);
+            startDate.setHours(0, 0, 0, 0);
             if (payDate < startDate) {
                 alert(`Дата выплаты не может быть раньше даты начала работы (${new Date(selectedEmployee.start_date).toLocaleDateString()})`);
                 return;
