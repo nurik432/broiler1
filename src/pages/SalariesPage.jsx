@@ -90,6 +90,7 @@ export default function SalariesPage() {
                             selectedEmployee={selectedEmployee}
                             setSelectedEmployee={setSelectedEmployee}
                             activeBatches={activeBatches}
+                            employees={employees}
                         />
                     )}
                 </div>

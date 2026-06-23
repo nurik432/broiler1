@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { calculateSalary } from '../../utils/calculateSalary';
 
-export default function SalaryTab({ selectedEmployee, activeBatches }) {
+export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activeBatches, employees }) {
     // UI state
     const [showArchivedPayments, setShowArchivedPayments] = useState(false);
     const [editingPayment, setEditingPayment] = useState(null);
@@ -177,7 +177,24 @@ export default function SalaryTab({ selectedEmployee, activeBatches }) {
             <div className="bg-white p-12 rounded-lg shadow-md text-center border border-gray-100">
                 <div className="text-4xl mb-4">👤</div>
                 <h2 className="text-xl font-semibold text-gray-800 mb-2">Сотрудник не выбран</h2>
-                <p className="text-gray-500">Пожалуйста, перейдите на вкладку «Принятие и увольнение» и выберите сотрудника для начисления зарплаты.</p>
+                <p className="text-gray-500 mb-6">Пожалуйста, выберите сотрудника для начисления зарплаты.</p>
+                <div className="max-w-md mx-auto">
+                    <select
+                        className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                        onChange={e => {
+                            const emp = employees.find(emp => emp.id === e.target.value);
+                            setSelectedEmployee(emp || null);
+                        }}
+                        value=""
+                    >
+                        <option value="" disabled>-- Выберите сотрудника --</option>
+                        {employees && employees.map(emp => (
+                            <option key={emp.id} value={emp.id}>
+                                {emp.full_name} {emp.position ? `(${emp.position})` : ''} {emp.end_date ? '(Уволен)' : ''}
+                            </option>
+                        ))}
+                    </select>
+                </div>
             </div>
         );
     }
@@ -186,6 +203,25 @@ export default function SalaryTab({ selectedEmployee, activeBatches }) {
 
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
+            {/* Employee Selector header */}
+            <div className="mb-8 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Сотрудник:</label>
+                <select
+                    className="w-full md:w-1/2 p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-white"
+                    value={selectedEmployee.id}
+                    onChange={e => {
+                        const emp = employees.find(emp => emp.id === e.target.value);
+                        setSelectedEmployee(emp || null);
+                    }}
+                >
+                    {employees && employees.map(emp => (
+                        <option key={emp.id} value={emp.id}>
+                            {emp.full_name} {emp.position ? `(${emp.position})` : ''} {emp.end_date ? '(Уволен)' : ''}
+                        </option>
+                    ))}
+                </select>
+            </div>
+
             <div className="flex flex-wrap justify-between items-start mb-6 gap-4">
                 <div>
                     <h2 className="text-2xl font-semibold">{selectedEmployee.full_name}</h2>
