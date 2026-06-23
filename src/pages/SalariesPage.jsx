@@ -8,9 +8,9 @@ import SalaryTab from '../pages/employees/SalaryTab';
 
 export default function SalariesPage() {
     // Global data
-    const [employees, setEmployees] = useState([]);
+    const [persons, setPersons] = useState([]);
     const [activeBatches, setActiveBatches] = useState([]);
-    const [selectedEmployee, setSelectedEmployee] = useState(null);
+    const [selectedPerson, setSelectedPerson] = useState(null);
     const [showArchivedEmployees, setShowArchivedEmployees] = useState(false);
     const [loading, setLoading] = useState(true);
 
@@ -18,13 +18,26 @@ export default function SalariesPage() {
     const [activeTab, setActiveTab] = useState('create'); // 'create' | 'hire' | 'salary'
 
     // Fetch helpers
-    const fetchEmployees = async () => {
+    const fetchPersons = async () => {
         const { data, error } = await supabase
-            .from('employees')
-            .select(`*, broiler_batches (id, batch_name, is_active, batch_end)`)
+            .from('persons')
+            .select(`
+                *,
+                employees (*, broiler_batches (id, batch_name, is_active, batch_end))
+            `)
             .order('full_name');
         if (error) console.error('Ошибка загрузки сотрудников:', error);
-        else setEmployees(data);
+        else {
+            const formatted = data.map(person => {
+                if (person.employees) {
+                    person.employees.sort((a, b) => new Date(b.start_date) - new Date(a.start_date));
+                } else {
+                    person.employees = [];
+                }
+                return person;
+            });
+            setPersons(formatted);
+        }
     };
 
     const fetchActiveBatches = async () => {
@@ -38,7 +51,7 @@ export default function SalariesPage() {
 
     useEffect(() => {
         setLoading(true);
-        Promise.all([fetchEmployees(), fetchActiveBatches()]).then(() => setLoading(false));
+        Promise.all([fetchPersons(), fetchActiveBatches()]).then(() => setLoading(false));
     }, []);
 
     // Tab navigation UI – premium glassmorphism style
@@ -71,26 +84,27 @@ export default function SalariesPage() {
                     {activeTab === 'create' && (
                         <CreateEmployeeTab
                             activeBatches={activeBatches}
-                            fetchEmployees={fetchEmployees}
+                            fetchPersons={fetchPersons}
+                            persons={persons}
                         />
                     )}
                     {activeTab === 'hire' && (
                         <HireFireTab
-                            employees={employees}
+                            persons={persons}
                             activeBatches={activeBatches}
-                            fetchEmployees={fetchEmployees}
+                            fetchPersons={fetchPersons}
                             showArchivedEmployees={showArchivedEmployees}
                             setShowArchivedEmployees={setShowArchivedEmployees}
-                            selectedEmployee={selectedEmployee}
-                            setSelectedEmployee={setSelectedEmployee}
+                            selectedPerson={selectedPerson}
+                            setSelectedPerson={setSelectedPerson}
                         />
                     )}
                     {activeTab === 'salary' && (
                         <SalaryTab
-                            selectedEmployee={selectedEmployee}
-                            setSelectedEmployee={setSelectedEmployee}
+                            selectedPerson={selectedPerson}
+                            setSelectedPerson={setSelectedPerson}
                             activeBatches={activeBatches}
-                            employees={employees}
+                            persons={persons}
                         />
                     )}
                 </div>

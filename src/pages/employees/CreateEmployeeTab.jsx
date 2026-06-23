@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { supabase } from '../../supabaseClient';
 
-export default function CreateEmployeeTab({ activeBatches, fetchEmployees }) {
+export default function CreateEmployeeTab({ activeBatches, fetchPersons, persons }) {
     const [newName, setNewName] = useState('');
     const [newPosition, setNewPosition] = useState('');
     const [newStartDate, setNewStartDate] = useState(new Date().toISOString().slice(0, 10));
@@ -13,31 +13,50 @@ export default function CreateEmployeeTab({ activeBatches, fetchEmployees }) {
 
     const handleAddEmployee = async (e) => {
         e.preventDefault();
-        // batch optional, no validation needed
         setIsAdding(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        const { error } = await supabase.from('employees').insert([
-            {
-                full_name: newName,
-                position: newPosition,
-                start_date: newStartDate,
-                batch_id: newBatchId || null,
-                is_active: true,
-                user_id: user.id,
-            },
-        ]);
-        if (error) {
-            alert('Ошибка: ' + error.message);
-        } else {
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            
+            let personId = null;
+            const existingPerson = persons?.find(p => p.full_name.trim().toLowerCase() === newName.trim().toLowerCase());
+            
+            if (existingPerson) {
+                personId = existingPerson.id;
+            } else {
+                const { data: newPersonData, error: personError } = await supabase.from('persons').insert([
+                    { full_name: newName.trim() }
+                ]).select().single();
+                
+                if (personError) throw personError;
+                personId = newPersonData.id;
+            }
+
+            const { error: employeeError } = await supabase.from('employees').insert([
+                {
+                    full_name: newName.trim(),
+                    person_id: personId,
+                    position: newPosition,
+                    start_date: newStartDate,
+                    batch_id: newBatchId || null,
+                    is_active: true,
+                    user_id: user.id,
+                },
+            ]);
+            
+            if (employeeError) throw employeeError;
+
             setNewName('');
             setNewPosition('');
             setNewStartDate(new Date().toISOString().slice(0, 10));
             setNewBatchId('');
             setSuccess(true);
             setTimeout(() => setSuccess(false), 3000);
-            await fetchEmployees();
+            await fetchPersons();
+        } catch (error) {
+            alert('Ошибка: ' + error.message);
+        } finally {
+            setIsAdding(false);
         }
-        setIsAdding(false);
     };
 
     return (

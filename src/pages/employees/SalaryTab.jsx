@@ -4,8 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 import { calculateSalary } from '../../utils/calculateSalary';
 
-export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activeBatches, employees }) {
-    // UI state
+export default function SalaryTab({ selectedPerson, setSelectedPerson, activeBatches, persons }) {
     const [showArchivedPayments, setShowArchivedPayments] = useState(false);
     const [editingPayment, setEditingPayment] = useState(null);
     const [editPaymentDate, setEditPaymentDate] = useState('');
@@ -18,64 +17,93 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
     const [paymentType, setPaymentType] = useState('аванс');
     const [allSalaries, setAllSalaries] = useState([]);
 
-    // Load salaries
     const loadSalaries = async () => {
-        if (!selectedEmployee) {
+        if (!selectedPerson) {
             setAllSalaries([]);
             return;
         }
+        
         const { data, error } = await supabase
             .from('salaries')
-            .select(`*`)
-            .eq('employee_id', selectedEmployee.id)
+            .select(`*`) 
+            .eq('person_id', selectedPerson.id)
             .order('payment_date', { ascending: false });
         
         if (error) {
             console.error('Ошибка загрузки выплат:', error);
             setAllSalaries([]);
         } else {
-            console.log('Loaded salaries from DB:', data);
-            const formatted = (data || []).map(s => ({
-                ...s,
-                batch_name: s.broiler_batches?.batch_name || null,
-                batch_is_active: s.broiler_batches?.is_active ?? true,
-            }));
-            console.log('Formatted salaries:', formatted);
+            const formatted = (data || []).map(s => {
+                let batchName = null;
+                let batchIsActive = true;
+                if (s.batch_id) {
+                    const batch = activeBatches.find(b => b.id === s.batch_id);
+                    if (batch) {
+                        batchName = batch.batch_name;
+                        batchIsActive = true;
+                    } else {
+                        selectedPerson.employees?.forEach(emp => {
+                            if (emp.broiler_batches?.id === s.batch_id) {
+                                batchName = emp.broiler_batches.batch_name;
+                                batchIsActive = emp.broiler_batches.is_active;
+                            }
+                        });
+                    }
+                }
+                return {
+                    ...s,
+                    batch_name: batchName,
+                    batch_is_active: batchIsActive,
+                };
+            });
             setAllSalaries(formatted);
         }
     };
 
     useEffect(() => {
         loadSalaries();
-    }, [selectedEmployee]);
+    }, [selectedPerson]);
 
     const filteredSalaries = useMemo(() => {
-        const filtered = allSalaries.filter(salary => {
+        return allSalaries.filter(salary => {
             if (!showArchivedPayments && salary.batch_id && salary.batch_is_active === false) {
                 return false;
             }
-            if (selectedEmployee?.start_date) {
-                const salaryDate = new Date(salary.payment_date);
-                salaryDate.setHours(0, 0, 0, 0);
-                const startDate = new Date(selectedEmployee.start_date);
-                startDate.setHours(0, 0, 0, 0);
-                if (salaryDate < startDate) {
-                    console.log('Filtered out salary because date', salaryDate, 'is before start date', startDate);
-                    return false;
-                }
-            }
             return true;
         });
-        console.log('Filtered salaries:', filtered);
-        return filtered;
-    }, [allSalaries, showArchivedPayments, selectedEmployee]);
+    }, [allSalaries, showArchivedPayments]);
 
-    // Calculate accrued salary using the core logic
+    // Calculate accrued salary logic across all employments
     const accruedData = useMemo(() => {
-        if (!selectedEmployee) return { salary: 0, totalDays: 0, effectiveDays: 0, breakdown: [] };
-        const batch = selectedEmployee.broiler_batches || {};
-        return calculateSalary(selectedEmployee, batch);
-    }, [selectedEmployee, allSalaries]);
+        if (!selectedPerson || !selectedPerson.employees) return { salary: 0, totalDays: 0, effectiveDays: 0, breakdownAgg: [] };
+        
+        let totalAccrued = 0;
+        let totalEffectiveDays = 0;
+        let breakdownAgg = [];
+
+        selectedPerson.employees.forEach((emp) => {
+            const batch = emp.broiler_batches || {};
+            const res = calculateSalary(emp, batch);
+            totalAccrued += res.salary;
+            totalEffectiveDays += res.effectiveDays;
+            
+            if (res.breakdown.length > 0) {
+                breakdownAgg.push({
+                    periodLabel: `Период: ${new Date(emp.start_date).toLocaleDateString()} — ${emp.end_date ? new Date(emp.end_date).toLocaleDateString() : 'По н.в.'}`,
+                    breakdown: res.breakdown,
+                    salary: res.salary
+                });
+            } else if (res.effectiveDays > 0) {
+                 breakdownAgg.push({
+                    periodLabel: `Период: ${new Date(emp.start_date).toLocaleDateString()} — ${emp.end_date ? new Date(emp.end_date).toLocaleDateString() : 'По н.в.'}`,
+                    breakdown: [{ label: 'Без начислений', sum: 0 }],
+                    salary: 0
+                });
+            }
+        });
+
+        return { salary: totalAccrued, effectiveDays: totalEffectiveDays, breakdownAgg };
+    }, [selectedPerson, allSalaries]);
 
     const salaryTotals = useMemo(() => {
         const totals = { totalAdvance: 0, totalSalary: 0, totalAll: 0, byBatch: {} };
@@ -101,31 +129,18 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
 
     const handleAddPayment = async e => {
         e.preventDefault();
-        if (!selectedEmployee) return;
-        
-        if (selectedEmployee.start_date) {
-            const payDate = new Date(paymentDate);
-            payDate.setHours(0, 0, 0, 0);
-            const startDate = new Date(selectedEmployee.start_date);
-            startDate.setHours(0, 0, 0, 0);
-            if (payDate < startDate) {
-                alert(`Дата выплаты не может быть раньше даты начала работы (${new Date(selectedEmployee.start_date).toLocaleDateString()})`);
-                return;
-            }
-        }
+        if (!selectedPerson) return;
         
         setIsAddingPayment(true);
         try {
             const { data: { user }, error: authError } = await supabase.auth.getUser();
-            if (authError || !user) {
-                console.warn('User not found or auth error:', authError);
-                // Continue without user if your DB schema allows it, or alert
-            }
-
-            const batchId = selectedEmployee.batch_id || null;
+            
+            const recentEmployment = selectedPerson.employees?.[0];
+            const batchId = recentEmployment?.batch_id || null;
             
             const insertData = {
-                employee_id: selectedEmployee.id,
+                person_id: selectedPerson.id,
+                employee_id: recentEmployment?.id || null, 
                 amount: Number(paymentAmount),
                 payment_type: paymentType,
                 payment_date: paymentDate,
@@ -161,9 +176,6 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
 
     const handleCancelEditPayment = () => {
         setEditingPayment(null);
-        setEditPaymentDate('');
-        setEditPaymentAmount('');
-        setEditPaymentType('аванс');
     };
 
     const handleSavePayment = async paymentId => {
@@ -177,9 +189,8 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
             })
             .eq('id', paymentId);
             
-        if (error) {
-            alert('Ошибка при сохранении: ' + error.message);
-        } else {
+        if (error) alert('Ошибка при сохранении: ' + error.message);
+        else {
             await loadSalaries();
             setEditingPayment(null);
         }
@@ -187,18 +198,15 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
     };
 
     const handleDeletePayment = async paymentId => {
-        if (!window.confirm('Вы уверены, что хотите удалить эту выплату?')) return;
+        if (!window.confirm('Удалить эту выплату?')) return;
         const { error } = await supabase.from('salaries').delete().eq('id', paymentId);
         if (error) alert('Ошибка при удалении: ' + error.message);
-        else {
-            await loadSalaries();
-        }
+        else await loadSalaries();
     };
 
-    const employeeBatch = selectedEmployee?.broiler_batches;
     const formatCurrency = amount => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(amount);
 
-    if (!selectedEmployee) {
+    if (!selectedPerson) {
         return (
             <div className="bg-white p-12 rounded-lg shadow-md text-center border border-gray-100">
                 <div className="text-4xl mb-4">👤</div>
@@ -208,15 +216,15 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
                     <select
                         className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
                         onChange={e => {
-                            const emp = employees.find(emp => emp.id === e.target.value);
-                            setSelectedEmployee(emp || null);
+                            const p = persons.find(p => p.id === e.target.value);
+                            setSelectedPerson(p || null);
                         }}
                         value=""
                     >
                         <option value="" disabled>-- Выберите сотрудника --</option>
-                        {employees && employees.map(emp => (
-                            <option key={emp.id} value={emp.id}>
-                                {emp.full_name} {emp.position ? `(${emp.position})` : ''} {emp.end_date ? '(Уволен)' : ''}
+                        {persons && persons.map(p => (
+                            <option key={p.id} value={p.id}>
+                                {p.full_name}
                             </option>
                         ))}
                     </select>
@@ -226,23 +234,24 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
     }
 
     const remainingToPay = Math.max(accruedData.salary - salaryTotals.totalAll, 0);
+    const recentEmployment = selectedPerson.employees?.[0];
+    const isEmployeeFired = !recentEmployment || recentEmployment.is_active === false || !!recentEmployment.end_date;
 
     return (
         <div className="bg-white p-6 rounded-lg shadow-md">
-            {/* Employee Selector header */}
             <div className="mb-8 p-4 bg-gray-50 rounded-xl border border-gray-200">
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Сотрудник:</label>
                 <select
                     className="w-full md:w-1/2 p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-white"
-                    value={selectedEmployee.id}
+                    value={selectedPerson.id}
                     onChange={e => {
-                        const emp = employees.find(emp => emp.id === e.target.value);
-                        setSelectedEmployee(emp || null);
+                        const p = persons.find(p => p.id === e.target.value);
+                        setSelectedPerson(p || null);
                     }}
                 >
-                    {employees && employees.map(emp => (
-                        <option key={emp.id} value={emp.id}>
-                            {emp.full_name} {emp.position ? `(${emp.position})` : ''} {emp.end_date ? '(Уволен)' : ''}
+                    {persons && persons.map(p => (
+                        <option key={p.id} value={p.id}>
+                            {p.full_name}
                         </option>
                     ))}
                 </select>
@@ -250,60 +259,32 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
 
             <div className="flex flex-wrap justify-between items-start mb-6 gap-4">
                 <div>
-                    <h2 className="text-2xl font-semibold">{selectedEmployee.full_name}</h2>
-                    {selectedEmployee.position && <p className="text-sm text-gray-500">{selectedEmployee.position}</p>}
-                    <div className="flex gap-4 text-sm text-gray-500 mt-2">
-                        {selectedEmployee.start_date && (
-                            <p>📅 Принят: <span className="font-medium">{new Date(selectedEmployee.start_date).toLocaleDateString()}</span></p>
-                        )}
-                        {selectedEmployee.end_date && (
-                            <p>🔴 Уволен: <span className="font-medium text-red-600">{new Date(selectedEmployee.end_date).toLocaleDateString()}</span></p>
-                        )}
-                    </div>
-                    {employeeBatch ? (
-                        <div className={`mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${employeeBatch.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'}`}>
-                            <span>{employeeBatch.is_active ? '🟢' : '🔴'}</span>
-                            <span>Партия: {employeeBatch.batch_name}</span>
-                            {!employeeBatch.is_active && <span className="text-xs ml-1">(архив)</span>}
-                        </div>
+                    <h2 className="text-2xl font-semibold">{selectedPerson.full_name}</h2>
+                    {isEmployeeFired ? (
+                        <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-700">🔴 Уволен</div>
                     ) : (
-                        <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-700">
-                            <span>⚪</span>
-                            <span>Без привязки к партии</span>
-                        </div>
+                        <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-700">🟢 Работает</div>
                     )}
                 </div>
                 <div className="flex flex-wrap gap-2 pt-2">
-                    <label className="flex items-center text-sm text-gray-600 cursor-pointer bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors">
+                    <label className="flex items-center text-sm text-gray-600 cursor-pointer bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-100">
                         <input type="checkbox" checked={showArchivedPayments} onChange={() => setShowArchivedPayments(!showArchivedPayments)} className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
                         <span className="ml-2 font-medium">Архивные выплаты</span>
                     </label>
                 </div>
             </div>
 
-            {employeeBatch && !employeeBatch.is_active && (
-                <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-xl">
-                    <p className="text-sm text-orange-800 flex items-center gap-2">
-                        <span className="text-lg">⚠️</span>
-                        <span>Партия <strong>{employeeBatch.batch_name}</strong> завершена. Добавление новых выплат к этой партии может быть недоступно.</span>
-                    </p>
-                </div>
-            )}
-
             {/* ACCRUED SALARY WIDGET */}
             <div className="mb-8 p-5 bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100 rounded-2xl shadow-sm">
-                <h3 className="text-lg font-bold text-indigo-900 mb-4">Актуальное начисление (по отработанным дням)</h3>
+                <h3 className="text-lg font-bold text-indigo-900 mb-4">Актуальное начисление (по всем периодам работы)</h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50">
-                        <p className="text-xs text-gray-500 mb-1">Отработано дней</p>
+                        <p className="text-xs text-gray-500 mb-1">Отработано дней (всего)</p>
                         <p className="font-bold text-xl text-gray-800">{accruedData.effectiveDays} дн.</p>
-                        {Number(selectedEmployee.absent_days) > 0 && (
-                            <p className="text-xs text-red-500 mt-1">Пропусков: {selectedEmployee.absent_days}</p>
-                        )}
                     </div>
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50">
-                        <p className="text-xs text-gray-500 mb-1">Начислено по ставке</p>
+                        <p className="text-xs text-gray-500 mb-1">Начислено по ставкам</p>
                         <p className="font-bold text-xl text-indigo-600">{formatCurrency(accruedData.salary)}</p>
                     </div>
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50">
@@ -318,22 +299,33 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
                     </div>
                 </div>
 
-                {accruedData.breakdown.length > 0 && (
+                {accruedData.breakdownAgg.length > 0 && (
                     <div className="mt-4 pt-4 border-t border-indigo-100/50">
                         <p className="text-xs font-semibold text-indigo-800 mb-2 uppercase tracking-wider">Детализация расчета:</p>
-                        <ul className="text-sm text-gray-600 space-y-1">
-                            {accruedData.breakdown.map((item, idx) => (
-                                <li key={idx} className="flex items-center gap-2">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-300"></span>
-                                    <span>{item.label} = <strong>{formatCurrency(item.sum)}</strong></span>
-                                </li>
+                        <div className="space-y-3">
+                            {accruedData.breakdownAgg.map((period, pIdx) => (
+                                <div key={pIdx} className="text-sm bg-white/50 p-2 rounded-lg">
+                                    <p className="font-semibold text-gray-700 mb-1">{period.periodLabel}</p>
+                                    <ul className="text-gray-600 space-y-1 ml-2">
+                                        {period.breakdown.map((item, idx) => (
+                                            <li key={idx} className="flex items-center gap-2">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-300"></span>
+                                                <span>{item.label} = <strong>{formatCurrency(item.sum)}</strong></span>
+                                            </li>
+                                        ))}
+                                        {period.breakdown.length > 1 && (
+                                            <li className="flex items-center gap-2 pt-1 border-t border-gray-200 mt-1 font-medium">
+                                                <span>Итого за период: <strong>{formatCurrency(period.salary)}</strong></span>
+                                            </li>
+                                        )}
+                                    </ul>
+                                </div>
                             ))}
-                        </ul>
+                        </div>
                     </div>
                 )}
             </div>
 
-            {/* Summary cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
                 <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 shadow-sm">
                     <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">Всего авансов</p>
@@ -355,30 +347,28 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
                 <h3 className="text-lg font-bold text-gray-800">История выплат</h3>
             </div>
 
-            {(!employeeBatch || employeeBatch.is_active !== false) && (
-                <form onSubmit={handleAddPayment} className="bg-gray-50 p-4 rounded-xl border border-gray-200 mb-6 flex flex-wrap items-end gap-4">
-                    <div className="flex-1 min-w-[150px]">
-                        <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">Дата</label>
-                        <input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required />
-                    </div>
-                    <div className="flex-1 min-w-[150px]">
-                        <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">Сумма</label>
-                        <input type="number" step="0.01" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} placeholder="0.00" className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required />
-                    </div>
-                    <div className="flex-1 min-w-[150px]">
-                        <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">Тип</label>
-                        <select value={paymentType} onChange={e => setPaymentType(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
-                            <option value="аванс">Аванс</option>
-                            <option value="зарплата">Зарплата (остаток)</option>
-                        </select>
-                    </div>
-                    <div className="w-full md:w-auto mt-2 md:mt-0">
-                        <button type="submit" disabled={isAddingPayment} className="w-full md:w-auto px-6 py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:bg-indigo-300 transition-colors shadow-sm">
-                            {isAddingPayment ? 'Добавление...' : '+ Выплатить'}
-                        </button>
-                    </div>
-                </form>
-            )}
+            <form onSubmit={handleAddPayment} className="bg-gray-50 p-4 rounded-xl border border-gray-200 mb-6 flex flex-wrap items-end gap-4">
+                <div className="flex-1 min-w-[150px]">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">Дата</label>
+                    <input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required />
+                </div>
+                <div className="flex-1 min-w-[150px]">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">Сумма</label>
+                    <input type="number" step="0.01" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} placeholder="0.00" className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" required />
+                </div>
+                <div className="flex-1 min-w-[150px]">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">Тип</label>
+                    <select value={paymentType} onChange={e => setPaymentType(e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+                        <option value="аванс">Аванс</option>
+                        <option value="зарплата">Зарплата (остаток)</option>
+                    </select>
+                </div>
+                <div className="w-full md:w-auto mt-2 md:mt-0">
+                    <button type="submit" disabled={isAddingPayment} className="w-full md:w-auto px-6 py-2.5 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-sm">
+                        {isAddingPayment ? 'Добавление...' : '+ Выплатить'}
+                    </button>
+                </div>
+            </form>
 
             <div className="overflow-x-auto rounded-xl border border-gray-200">
                 <table className="min-w-full text-left border-collapse">
@@ -421,8 +411,8 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
                                         </div>
                                     ) : (
                                         <div className="flex justify-end gap-3">
-                                            <button onClick={() => handleStartEditPayment(pay)} className="text-indigo-600 hover:text-indigo-800 font-medium">Изменить</button>
-                                            <button onClick={() => handleDeletePayment(pay.id)} className="text-red-500 hover:text-red-700 font-medium">Удалить</button>
+                                            <button onClick={() => handleStartEditPayment(pay)} className="text-indigo-600 font-medium">Изменить</button>
+                                            <button onClick={() => handleDeletePayment(pay.id)} className="text-red-500 font-medium">Удалить</button>
                                         </div>
                                     )}
                                 </td>
