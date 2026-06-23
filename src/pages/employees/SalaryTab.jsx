@@ -104,26 +104,41 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
         }
         
         setIsAddingPayment(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        const batchId = selectedEmployee.batch_id || null;
-        
-        const { error } = await supabase.from('salaries').insert([
-            {
+        try {
+            const { data: { user }, error: authError } = await supabase.auth.getUser();
+            if (authError || !user) {
+                console.warn('User not found or auth error:', authError);
+                // Continue without user if your DB schema allows it, or alert
+            }
+
+            const batchId = selectedEmployee.batch_id || null;
+            
+            const insertData = {
                 employee_id: selectedEmployee.id,
                 amount: Number(paymentAmount),
                 payment_type: paymentType,
                 payment_date: paymentDate,
-                user_id: user.id,
                 batch_id: batchId,
-            },
-        ]);
-        
-        if (error) alert('Ошибка: ' + error.message);
-        else {
-            setPaymentAmount('');
-            await loadSalaries();
+            };
+            if (user?.id) {
+                insertData.user_id = user.id;
+            }
+            
+            const { error } = await supabase.from('salaries').insert([insertData]);
+            
+            if (error) {
+                console.error('Insert error:', error);
+                alert('Ошибка: ' + error.message);
+            } else {
+                setPaymentAmount('');
+                await loadSalaries();
+            }
+        } catch (err) {
+            console.error('Unexpected error:', err);
+            alert('Произошла непредвиденная ошибка: ' + err.message);
+        } finally {
+            setIsAddingPayment(false);
         }
-        setIsAddingPayment(false);
     };
 
     const handleStartEditPayment = payment => {
