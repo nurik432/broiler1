@@ -26,7 +26,7 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
         }
         const { data, error } = await supabase
             .from('salaries')
-            .select(`*, broiler_batches (batch_name, is_active)`)
+            .select(`*`)
             .eq('employee_id', selectedEmployee.id)
             .order('payment_date', { ascending: false });
         
@@ -34,11 +34,13 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
             console.error('Ошибка загрузки выплат:', error);
             setAllSalaries([]);
         } else {
+            console.log('Loaded salaries from DB:', data);
             const formatted = (data || []).map(s => ({
                 ...s,
                 batch_name: s.broiler_batches?.batch_name || null,
                 batch_is_active: s.broiler_batches?.is_active ?? true,
             }));
+            console.log('Formatted salaries:', formatted);
             setAllSalaries(formatted);
         }
     };
@@ -48,7 +50,7 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
     }, [selectedEmployee]);
 
     const filteredSalaries = useMemo(() => {
-        return allSalaries.filter(salary => {
+        const filtered = allSalaries.filter(salary => {
             if (!showArchivedPayments && salary.batch_id && salary.batch_is_active === false) {
                 return false;
             }
@@ -57,10 +59,15 @@ export default function SalaryTab({ selectedEmployee, setSelectedEmployee, activ
                 salaryDate.setHours(0, 0, 0, 0);
                 const startDate = new Date(selectedEmployee.start_date);
                 startDate.setHours(0, 0, 0, 0);
-                if (salaryDate < startDate) return false;
+                if (salaryDate < startDate) {
+                    console.log('Filtered out salary because date', salaryDate, 'is before start date', startDate);
+                    return false;
+                }
             }
             return true;
         });
+        console.log('Filtered salaries:', filtered);
+        return filtered;
     }, [allSalaries, showArchivedPayments, selectedEmployee]);
 
     // Calculate accrued salary using the core logic
