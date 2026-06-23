@@ -57,7 +57,7 @@ function CoalPage() {
             else if (t.transaction_type === 'debt') { s.total_debt += amt; s.total_kg += kg; }
             else if (t.transaction_type === 'payment') { s.total_paid += amt; }
         });
-        s.current_balance = s.total_purchased + s.total_debt - s.total_paid;
+        s.current_balance = s.total_debt - s.total_paid;
         return s;
     }, [filteredTransactions]);
 

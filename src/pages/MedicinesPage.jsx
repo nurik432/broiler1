@@ -68,7 +68,7 @@ function MedicinesPage() {
             else if (t.transaction_type === 'debt') s.total_debt += amt;
             else if (t.transaction_type === 'payment') s.total_paid += amt;
         });
-        s.current_balance = s.total_purchased + s.total_debt - s.total_paid;
+        s.current_balance = s.total_debt - s.total_paid;
         return s;
     }, [filteredTransactions]);
 
@@ -85,7 +85,7 @@ function MedicinesPage() {
         return Object.entries(map).map(([name, data]) => ({
             name,
             ...data,
-            balance: data.purchased + data.debt - data.paid
+            balance: data.debt - data.paid
         }));
     }, [filteredTransactions]);
 
