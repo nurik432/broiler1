@@ -19,6 +19,14 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
     const [editSalaryTiers, setEditSalaryTiers] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
 
+    // Добавление нового периода
+    const [isAddingPeriod, setIsAddingPeriod] = useState(false);
+    const [newPeriodPosition, setNewPeriodPosition] = useState('');
+    const [newPeriodStartDate, setNewPeriodStartDate] = useState(new Date().toISOString().slice(0, 10));
+    const [newPeriodEndDate, setNewPeriodEndDate] = useState('');
+    const [newPeriodBatchId, setNewPeriodBatchId] = useState('');
+    const [newPeriodRate, setNewPeriodRate] = useState('');
+
     // Удаление
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
@@ -163,6 +171,53 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
         setIsDeleting(false);
     };
 
+    const handleStartAddPeriod = () => {
+        setNewPeriodPosition(recentEmployment?.position || '');
+        setNewPeriodStartDate(new Date().toISOString().slice(0, 10));
+        setNewPeriodEndDate('');
+        setNewPeriodBatchId('');
+        setNewPeriodRate(recentEmployment?.rate || '');
+        setIsAddingPeriod(true);
+        setIsEditing(false);
+    };
+
+    const handleCancelAddPeriod = () => {
+        setIsAddingPeriod(false);
+    };
+
+    const handleSaveNewPeriod = async (e) => {
+        e.preventDefault();
+        if (!selectedPerson) return;
+        setIsSaving(true);
+
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+
+            const { error } = await supabase.from('employees').insert({
+                person_id: selectedPerson.id,
+                full_name: selectedPerson.full_name,
+                position: newPeriodPosition,
+                start_date: newPeriodStartDate,
+                end_date: newPeriodEndDate || null,
+                batch_id: newPeriodBatchId || null,
+                rate: Number(newPeriodRate) || 0,
+                is_active: !newPeriodEndDate,
+                user_id: user?.id,
+            });
+
+            if (error) {
+                alert('Ошибка при добавлении периода: ' + error.message);
+            } else {
+                await fetchPersons();
+                setSelectedPerson(null);
+                setIsAddingPeriod(false);
+            }
+        } catch (err) {
+            alert('Произошла ошибка: ' + err.message);
+        }
+        setIsSaving(false);
+    };
+
     return (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="md:col-span-1">
@@ -282,6 +337,12 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
                                 >
                                     🗑 Удалить
                                 </button>
+                                <button
+                                    onClick={handleStartAddPeriod}
+                                    className="px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 text-sm font-medium transition-colors shadow-sm"
+                                >
+                                    ➕ Добавить период
+                                </button>
                             </div>
                         </div>
 
@@ -321,6 +382,43 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
                                 <div className="flex gap-3 mt-4">
                                     <button type="submit" disabled={isSaving} className="bg-green-600 text-white px-5 py-2.5 rounded-xl font-medium shadow-sm">Сохранить</button>
                                     <button type="button" onClick={handleCancelEdit} className="bg-gray-200 px-5 py-2.5 rounded-xl font-medium">Отмена</button>
+                                </div>
+                            </form>
+                        )}
+
+                        {isAddingPeriod && (
+                            <form onSubmit={handleSaveNewPeriod} className="mb-6 pb-6 border-b bg-emerald-50 p-5 rounded-xl">
+                                <h3 className="font-bold mb-4 text-lg text-gray-800">➕ Добавить новый период работы</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                                    <div>
+                                        <label className="text-sm font-semibold">Должность</label>
+                                        <input type="text" value={newPeriodPosition} onChange={e => setNewPeriodPosition(e.target.value)} className="w-full p-2.5 border rounded-xl mt-1" />
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-semibold">Партия</label>
+                                        <select value={newPeriodBatchId} onChange={e => setNewPeriodBatchId(e.target.value)} className="w-full p-2.5 border-2 border-emerald-200 rounded-xl mt-1">
+                                            <option value="">— Без партии —</option>
+                                            {activeBatches.map(b => <option key={b.id} value={b.id}>{b.batch_name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-semibold">Дата начала</label>
+                                        <input type="date" value={newPeriodStartDate} onChange={e => setNewPeriodStartDate(e.target.value)} required className="w-full p-2.5 border rounded-xl mt-1" />
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-semibold text-red-600">Дата окончания</label>
+                                        <input type="date" value={newPeriodEndDate} onChange={e => setNewPeriodEndDate(e.target.value)} className="w-full p-2.5 border border-red-200 rounded-xl mt-1" />
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium">Ставка/день</label>
+                                        <input type="number" step="0.01" value={newPeriodRate} onChange={e => setNewPeriodRate(e.target.value)} className="w-full p-2.5 border rounded-xl mt-1" />
+                                    </div>
+                                </div>
+                                <div className="flex gap-3 mt-4">
+                                    <button type="submit" disabled={isSaving} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-medium shadow-sm hover:bg-emerald-700 disabled:bg-gray-300">
+                                        {isSaving ? 'Сохранение...' : 'Сохранить период'}
+                                    </button>
+                                    <button type="button" onClick={handleCancelAddPeriod} className="bg-gray-200 px-5 py-2.5 rounded-xl font-medium">Отмена</button>
                                 </div>
                             </form>
                         )}
