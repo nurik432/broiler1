@@ -20,6 +20,7 @@ import CoalPage from './pages/CoalPage';
 import WorkshopsPage from './pages/WorkshopsPage';
 import TasksPage from './pages/TasksPage';
 import DailyEntryPage from './pages/DailyEntryPage';
+import DebtsPage from './pages/DebtsPage';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -66,6 +67,7 @@ function App() {
         <Route path="/workshops" element={<WorkshopsPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/daily-entry" element={<DailyEntryPage />} />
+        <Route path="/debts" element={<DebtsPage />} />
       </Route>
     </Routes>
   );
