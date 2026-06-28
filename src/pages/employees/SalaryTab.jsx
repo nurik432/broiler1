@@ -23,10 +23,18 @@ export default function SalaryTab({ selectedPerson, setSelectedPerson, activeBat
             return;
         }
         
+        // Collect all employee_ids belonging to this person
+        const employeeIds = (selectedPerson.employees || []).map(emp => emp.id);
+        
+        if (employeeIds.length === 0) {
+            setAllSalaries([]);
+            return;
+        }
+        
         const { data, error } = await supabase
             .from('salaries')
             .select(`*`) 
-            .eq('person_id', selectedPerson.id)
+            .in('employee_id', employeeIds)
             .order('payment_date', { ascending: false });
         
         if (error) {
@@ -139,7 +147,6 @@ export default function SalaryTab({ selectedPerson, setSelectedPerson, activeBat
             const batchId = recentEmployment?.batch_id || null;
             
             const insertData = {
-                person_id: selectedPerson.id,
                 employee_id: recentEmployment?.id || null, 
                 amount: Number(paymentAmount),
                 payment_type: paymentType,
