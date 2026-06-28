@@ -5,7 +5,6 @@ import { supabase } from '../supabaseClient';
 import CreateEmployeeTab from '../pages/employees/CreateEmployeeTab';
 import HireFireTab from '../pages/employees/HireFireTab';
 import SalaryTab from '../pages/employees/SalaryTab';
-import DebtTab from '../pages/employees/DebtTab';
 
 export default function SalariesPage() {
     // Global data
@@ -15,8 +14,7 @@ export default function SalariesPage() {
     const [showArchivedEmployees, setShowArchivedEmployees] = useState(false);
     const [loading, setLoading] = useState(true);
 
-    // Tab state
-    const [activeTab, setActiveTab] = useState('create'); // 'create' | 'hire' | 'salary' | 'debt'
+    const [activeTab, setActiveTab] = useState('create'); // 'create' | 'hire' | 'salary'
 
     // Fetch helpers
     const fetchPersons = async () => {
@@ -76,7 +74,6 @@ export default function SalariesPage() {
                 <TabButton id="create" label="Создание сотрудника" />
                 <TabButton id="hire" label="Принятие и увольнение" />
                 <TabButton id="salary" label="Начисление зарплаты" />
-                <TabButton id="debt" label="💰 Долги" />
             </div>
 
             {loading && <p className="text-gray-500">Загрузка данных…</p>}
@@ -108,9 +105,6 @@ export default function SalariesPage() {
                             activeBatches={activeBatches}
                             persons={persons}
                         />
-                    )}
-                    {activeTab === 'debt' && (
-                        <DebtTab persons={persons} />
                     )}
                 </div>
             )}

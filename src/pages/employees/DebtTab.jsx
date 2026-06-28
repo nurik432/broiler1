@@ -1,14 +1,15 @@
 // src/pages/employees/DebtTab.jsx
+// Компонент для учёта долгов цеха (кому должны / за что)
 
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../supabaseClient';
 
-export default function DebtTab({ persons }) {
+export default function DebtTab() {
     const [debts, setDebts] = useState([]);
     const [loading, setLoading] = useState(true);
 
     // Form: add debt
-    const [debtPersonId, setDebtPersonId] = useState('');
+    const [debtCreditor, setDebtCreditor] = useState('');
     const [debtAmount, setDebtAmount] = useState('');
     const [debtDescription, setDebtDescription] = useState('');
     const [debtDate, setDebtDate] = useState(new Date().toISOString().slice(0, 10));
@@ -24,19 +25,15 @@ export default function DebtTab({ persons }) {
     // Expanded debt detail
     const [expandedDebtId, setExpandedDebtId] = useState(null);
 
-    // Filter
+    // Filters
     const [showSettled, setShowSettled] = useState(false);
-    const [filterPersonId, setFilterPersonId] = useState('');
+    const [filterCreditor, setFilterCreditor] = useState('');
 
     const fetchDebts = async () => {
         setLoading(true);
         const { data, error } = await supabase
             .from('debts')
-            .select(`
-                *,
-                person:persons(id, full_name),
-                debt_payments(*)
-            `)
+            .select(`*, debt_payments(*)`)
             .order('debt_date', { ascending: false });
 
         if (error) {
@@ -48,97 +45,77 @@ export default function DebtTab({ persons }) {
         setLoading(false);
     };
 
-    useEffect(() => {
-        fetchDebts();
-    }, []);
+    useEffect(() => { fetchDebts(); }, []);
+
+    // Unique creditors for filter & autocomplete
+    const uniqueCreditors = useMemo(() => {
+        const set = new Set();
+        debts.forEach(d => { if (d.creditor_name) set.add(d.creditor_name); });
+        return Array.from(set).sort();
+    }, [debts]);
 
     const filteredDebts = useMemo(() => {
         return debts.filter(d => {
             if (!showSettled && d.is_settled) return false;
-            if (filterPersonId && d.person_id !== filterPersonId) return false;
+            if (filterCreditor && d.creditor_name !== filterCreditor) return false;
             return true;
         });
-    }, [debts, showSettled, filterPersonId]);
+    }, [debts, showSettled, filterCreditor]);
 
-    // Dashboard calculations
+    // Dashboard
     const dashboard = useMemo(() => {
         const totalDebt = debts.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
         const totalPaid = debts.reduce((sum, d) => {
-            const payments = d.debt_payments || [];
-            return sum + payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+            return sum + (d.debt_payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
         }, 0);
         const activeDebts = debts.filter(d => !d.is_settled).length;
         const settledDebts = debts.filter(d => d.is_settled).length;
 
-        // Per person
-        const byPerson = {};
+        // Per creditor
+        const byCreditor = {};
         debts.forEach(d => {
-            const name = d.person?.full_name || 'Неизвестный';
-            const personId = d.person_id;
-            if (!byPerson[personId]) {
-                byPerson[personId] = { name, totalDebt: 0, totalPaid: 0, activeCount: 0 };
-            }
-            byPerson[personId].totalDebt += Number(d.amount) || 0;
-            const payments = d.debt_payments || [];
-            byPerson[personId].totalPaid += payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-            if (!d.is_settled) byPerson[personId].activeCount++;
+            const name = d.creditor_name || 'Без имени';
+            if (!byCreditor[name]) byCreditor[name] = { totalDebt: 0, totalPaid: 0, activeCount: 0 };
+            byCreditor[name].totalDebt += Number(d.amount) || 0;
+            byCreditor[name].totalPaid += (d.debt_payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+            if (!d.is_settled) byCreditor[name].activeCount++;
         });
 
         return {
-            totalDebt,
-            totalPaid,
+            totalDebt, totalPaid,
             remaining: totalDebt - totalPaid,
-            activeDebts,
-            settledDebts,
-            byPerson: Object.entries(byPerson).map(([id, data]) => ({
-                personId: id,
-                ...data,
-                remaining: data.totalDebt - data.totalPaid,
+            activeDebts, settledDebts,
+            byCreditor: Object.entries(byCreditor).map(([name, data]) => ({
+                name, ...data, remaining: data.totalDebt - data.totalPaid,
             })).sort((a, b) => b.remaining - a.remaining),
         };
     }, [debts]);
 
-    const getDebtPaid = (debt) => {
-        return (debt.debt_payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-    };
-
-    const getDebtRemaining = (debt) => {
-        return Math.max((Number(debt.amount) || 0) - getDebtPaid(debt), 0);
-    };
+    const getDebtPaid = (debt) => (debt.debt_payments || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const getDebtRemaining = (debt) => Math.max((Number(debt.amount) || 0) - getDebtPaid(debt), 0);
 
     const handleAddDebt = async (e) => {
         e.preventDefault();
-        if (!debtPersonId || !debtAmount) return;
-
+        if (!debtCreditor.trim() || !debtAmount) return;
         setIsAddingDebt(true);
         try {
             const { data: { user } } = await supabase.auth.getUser();
             const { error } = await supabase.from('debts').insert({
-                person_id: debtPersonId,
+                creditor_name: debtCreditor.trim(),
                 amount: Number(debtAmount),
                 description: debtDescription || null,
                 debt_date: debtDate,
                 user_id: user?.id,
             });
-
-            if (error) {
-                alert('Ошибка: ' + error.message);
-            } else {
-                setDebtAmount('');
-                setDebtDescription('');
-                setDebtPersonId('');
-                await fetchDebts();
-            }
-        } catch (err) {
-            alert('Ошибка: ' + err.message);
-        }
+            if (error) alert('Ошибка: ' + error.message);
+            else { setDebtAmount(''); setDebtDescription(''); setDebtCreditor(''); await fetchDebts(); }
+        } catch (err) { alert('Ошибка: ' + err.message); }
         setIsAddingDebt(false);
     };
 
     const handlePayDebt = async (e, debtId) => {
         e.preventDefault();
         if (!payAmount) return;
-
         setIsPayingDebt(true);
         try {
             const { data: { user } } = await supabase.auth.getUser();
@@ -149,11 +126,8 @@ export default function DebtTab({ persons }) {
                 description: payDescription || null,
                 user_id: user?.id,
             });
-
-            if (error) {
-                alert('Ошибка: ' + error.message);
-            } else {
-                // Check if debt is fully paid
+            if (error) { alert('Ошибка: ' + error.message); }
+            else {
                 const debt = debts.find(d => d.id === debtId);
                 if (debt) {
                     const totalPaidNow = getDebtPaid(debt) + Number(payAmount);
@@ -161,15 +135,9 @@ export default function DebtTab({ persons }) {
                         await supabase.from('debts').update({ is_settled: true }).eq('id', debtId);
                     }
                 }
-
-                setPayAmount('');
-                setPayDescription('');
-                setPayingDebtId(null);
-                await fetchDebts();
+                setPayAmount(''); setPayDescription(''); setPayingDebtId(null); await fetchDebts();
             }
-        } catch (err) {
-            alert('Ошибка: ' + err.message);
-        }
+        } catch (err) { alert('Ошибка: ' + err.message); }
         setIsPayingDebt(false);
     };
 
@@ -182,12 +150,8 @@ export default function DebtTab({ persons }) {
 
     const handleDeletePayment = async (paymentId) => {
         if (!window.confirm('Удалить это погашение?')) return;
-        const { error } = await supabase.from('debt_payments').delete().eq('id', paymentId);
-        if (error) alert('Ошибка: ' + error.message);
-        else {
-            // Re-check if debt needs to be unsettled
-            await fetchDebts();
-        }
+        await supabase.from('debt_payments').delete().eq('id', paymentId);
+        await fetchDebts();
     };
 
     const handleToggleSettled = async (debtId, currentSettled) => {
@@ -199,52 +163,49 @@ export default function DebtTab({ persons }) {
     const formatCurrency = (amount) =>
         new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'TJS' }).format(amount || 0);
 
-    if (loading) {
-        return <p className="text-gray-500 p-6">Загрузка данных о долгах…</p>;
-    }
+    if (loading) return <p className="text-gray-500 p-6">Загрузка данных о долгах…</p>;
 
     return (
         <div className="space-y-8">
             {/* ═══ DASHBOARD ═══ */}
             <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
-                <h2 className="text-xl font-bold text-gray-800 mb-5">📊 Сводка по долгам</h2>
+                <h2 className="text-xl font-bold text-gray-800 mb-5">📊 Сводка по долгам цеха</h2>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                     <div className="p-4 rounded-xl bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-100">
-                        <p className="text-xs text-orange-600 font-semibold uppercase tracking-wider mb-1">Всего выдано</p>
+                        <p className="text-xs text-orange-600 font-semibold uppercase tracking-wider mb-1">Всего долгов</p>
                         <p className="font-bold text-2xl text-orange-700">{formatCurrency(dashboard.totalDebt)}</p>
                     </div>
                     <div className="p-4 rounded-xl bg-gradient-to-br from-green-50 to-emerald-50 border border-green-100">
-                        <p className="text-xs text-green-600 font-semibold uppercase tracking-wider mb-1">Погашено</p>
+                        <p className="text-xs text-green-600 font-semibold uppercase tracking-wider mb-1">Оплачено</p>
                         <p className="font-bold text-2xl text-green-700">{formatCurrency(dashboard.totalPaid)}</p>
                     </div>
                     <div className={`p-4 rounded-xl border ${dashboard.remaining > 0 ? 'bg-gradient-to-br from-red-50 to-rose-50 border-red-100' : 'bg-gray-50 border-gray-200'}`}>
-                        <p className={`text-xs font-semibold uppercase tracking-wider mb-1 ${dashboard.remaining > 0 ? 'text-red-600' : 'text-gray-500'}`}>Остаток долгов</p>
+                        <p className={`text-xs font-semibold uppercase tracking-wider mb-1 ${dashboard.remaining > 0 ? 'text-red-600' : 'text-gray-500'}`}>Остаток</p>
                         <p className={`font-bold text-2xl ${dashboard.remaining > 0 ? 'text-red-600' : 'text-gray-700'}`}>{formatCurrency(dashboard.remaining)}</p>
                     </div>
                     <div className="p-4 rounded-xl bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100">
-                        <p className="text-xs text-indigo-600 font-semibold uppercase tracking-wider mb-1">Активных / Погашенных</p>
+                        <p className="text-xs text-indigo-600 font-semibold uppercase tracking-wider mb-1">Активных / Закрытых</p>
                         <p className="font-bold text-2xl text-indigo-700">{dashboard.activeDebts} <span className="text-base text-gray-400 font-normal">/ {dashboard.settledDebts}</span></p>
                     </div>
                 </div>
 
-                {/* Per-person summary */}
-                {dashboard.byPerson.length > 0 && (
+                {dashboard.byCreditor.length > 0 && (
                     <div>
-                        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">По сотрудникам</h3>
+                        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">По кредиторам</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {dashboard.byPerson.map(p => (
-                                <div key={p.personId} className={`p-4 rounded-xl border shadow-sm ${p.remaining > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+                            {dashboard.byCreditor.map(c => (
+                                <div key={c.name} className={`p-4 rounded-xl border shadow-sm ${c.remaining > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
                                     <div className="flex justify-between items-start mb-2">
-                                        <p className="font-bold text-gray-800">{p.name}</p>
-                                        {p.activeCount > 0 && (
-                                            <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">{p.activeCount} акт.</span>
+                                        <p className="font-bold text-gray-800">{c.name}</p>
+                                        {c.activeCount > 0 && (
+                                            <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">{c.activeCount} акт.</span>
                                         )}
                                     </div>
                                     <div className="text-xs text-gray-600 space-y-0.5">
-                                        <p>Выдано: <span className="text-orange-600 font-medium">{formatCurrency(p.totalDebt)}</span></p>
-                                        <p>Погашено: <span className="text-green-600 font-medium">{formatCurrency(p.totalPaid)}</span></p>
+                                        <p>Долг: <span className="text-orange-600 font-medium">{formatCurrency(c.totalDebt)}</span></p>
+                                        <p>Оплачено: <span className="text-green-600 font-medium">{formatCurrency(c.totalPaid)}</span></p>
                                         <p className="pt-1 border-t mt-1">
-                                            Остаток: <span className={`font-bold ${p.remaining > 0 ? 'text-red-600' : 'text-gray-700'}`}>{formatCurrency(p.remaining)}</span>
+                                            Остаток: <span className={`font-bold ${c.remaining > 0 ? 'text-red-600' : 'text-gray-700'}`}>{formatCurrency(c.remaining)}</span>
                                         </p>
                                     </div>
                                 </div>
@@ -256,61 +217,42 @@ export default function DebtTab({ persons }) {
 
             {/* ═══ ADD DEBT FORM ═══ */}
             <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
-                <h2 className="text-xl font-bold text-gray-800 mb-4">➕ Добавить долг</h2>
+                <h2 className="text-xl font-bold text-gray-800 mb-4">➕ Записать долг</h2>
                 <form onSubmit={handleAddDebt} className="space-y-4">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Сотрудник</label>
-                            <select
-                                value={debtPersonId}
-                                onChange={e => setDebtPersonId(e.target.value)}
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">Кому должны</label>
+                            <input
+                                type="text"
+                                value={debtCreditor}
+                                onChange={e => setDebtCreditor(e.target.value)}
+                                placeholder="Имя / Фирма"
+                                list="creditor-suggestions"
                                 required
-                                className="w-full p-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-white"
-                            >
-                                <option value="">-- Выберите --</option>
-                                {persons && persons.map(p => (
-                                    <option key={p.id} value={p.id}>{p.full_name}</option>
-                                ))}
-                            </select>
+                                className="w-full p-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <datalist id="creditor-suggestions">
+                                {uniqueCreditors.map(c => <option key={c} value={c} />)}
+                            </datalist>
                         </div>
                         <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-1">Сумма</label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                value={debtAmount}
-                                onChange={e => setDebtAmount(e.target.value)}
-                                placeholder="0.00"
-                                required
-                                className="w-full p-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
-                            />
+                            <input type="number" step="0.01" value={debtAmount} onChange={e => setDebtAmount(e.target.value)}
+                                placeholder="0.00" required className="w-full p-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500" />
                         </div>
                         <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-1">Дата</label>
-                            <input
-                                type="date"
-                                value={debtDate}
-                                onChange={e => setDebtDate(e.target.value)}
-                                required
-                                className="w-full p-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
-                            />
+                            <input type="date" value={debtDate} onChange={e => setDebtDate(e.target.value)}
+                                required className="w-full p-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500" />
                         </div>
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 mb-1">Описание</label>
-                            <input
-                                type="text"
-                                value={debtDescription}
-                                onChange={e => setDebtDescription(e.target.value)}
-                                placeholder="За что?"
-                                className="w-full p-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
-                            />
+                            <label className="block text-sm font-semibold text-gray-700 mb-1">За что</label>
+                            <input type="text" value={debtDescription} onChange={e => setDebtDescription(e.target.value)}
+                                placeholder="Корм, лекарства, и т.д." className="w-full p-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500" />
                         </div>
                     </div>
-                    <button
-                        type="submit"
-                        disabled={isAddingDebt}
-                        className="px-6 py-2.5 bg-orange-600 text-white font-medium rounded-xl hover:bg-orange-700 transition-colors shadow-sm disabled:bg-gray-300"
-                    >
+                    <button type="submit" disabled={isAddingDebt}
+                        className="px-6 py-2.5 bg-orange-600 text-white font-medium rounded-xl hover:bg-orange-700 transition-colors shadow-sm disabled:bg-gray-300">
                         {isAddingDebt ? 'Сохранение...' : '📋 Записать долг'}
                     </button>
                 </form>
@@ -321,31 +263,24 @@ export default function DebtTab({ persons }) {
                 <div className="flex flex-wrap justify-between items-center mb-5 gap-3">
                     <h2 className="text-xl font-bold text-gray-800">📃 Список долгов</h2>
                     <div className="flex flex-wrap gap-3 items-center">
-                        <select
-                            value={filterPersonId}
-                            onChange={e => setFilterPersonId(e.target.value)}
-                            className="p-2 border border-gray-300 rounded-lg text-sm bg-white"
-                        >
-                            <option value="">Все сотрудники</option>
-                            {persons && persons.map(p => (
-                                <option key={p.id} value={p.id}>{p.full_name}</option>
-                            ))}
-                        </select>
+                        {uniqueCreditors.length > 0 && (
+                            <select value={filterCreditor} onChange={e => setFilterCreditor(e.target.value)}
+                                className="p-2 border border-gray-300 rounded-lg text-sm bg-white">
+                                <option value="">Все кредиторы</option>
+                                {uniqueCreditors.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        )}
                         <label className="flex items-center text-sm text-gray-600 cursor-pointer gap-1.5 select-none bg-gray-50 px-3 py-2 rounded-lg border border-gray-200">
-                            <input
-                                type="checkbox"
-                                checked={showSettled}
-                                onChange={() => setShowSettled(!showSettled)}
-                                className="h-4 w-4 rounded border-gray-300 text-indigo-600"
-                            />
-                            <span className="font-medium">Погашенные</span>
+                            <input type="checkbox" checked={showSettled} onChange={() => setShowSettled(!showSettled)}
+                                className="h-4 w-4 rounded border-gray-300 text-indigo-600" />
+                            <span className="font-medium">Закрытые</span>
                         </label>
                     </div>
                 </div>
 
                 <div className="space-y-4">
                     {filteredDebts.length === 0 ? (
-                        <p className="text-center text-gray-400 py-8">Нет долгов{!showSettled ? ' (попробуйте включить погашенные)' : ''}</p>
+                        <p className="text-center text-gray-400 py-8">Нет долгов{!showSettled ? ' (попробуйте включить закрытые)' : ''}</p>
                     ) : filteredDebts.map(debt => {
                         const paid = getDebtPaid(debt);
                         const remaining = getDebtRemaining(debt);
@@ -354,17 +289,14 @@ export default function DebtTab({ persons }) {
 
                         return (
                             <div key={debt.id} className={`rounded-xl border overflow-hidden transition-all ${debt.is_settled ? 'border-green-200 bg-green-50/50' : 'border-gray-200 bg-white'}`}>
-                                {/* Debt header */}
-                                <div
-                                    className="p-4 cursor-pointer hover:bg-gray-50/50 transition-colors"
-                                    onClick={() => setExpandedDebtId(isExpanded ? null : debt.id)}
-                                >
+                                <div className="p-4 cursor-pointer hover:bg-gray-50/50 transition-colors"
+                                    onClick={() => setExpandedDebtId(isExpanded ? null : debt.id)}>
                                     <div className="flex flex-wrap justify-between items-start gap-3">
                                         <div className="flex-1 min-w-[200px]">
                                             <div className="flex items-center gap-2 mb-1">
-                                                <span className="font-bold text-gray-800">{debt.person?.full_name || '—'}</span>
+                                                <span className="font-bold text-gray-800">{debt.creditor_name || '—'}</span>
                                                 {debt.is_settled ? (
-                                                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">✅ Погашен</span>
+                                                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">✅ Закрыт</span>
                                                 ) : (
                                                     <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">⏳ Активный</span>
                                                 )}
@@ -379,7 +311,7 @@ export default function DebtTab({ persons }) {
                                             <p className="font-bold text-lg text-orange-600">{formatCurrency(debt.amount)}</p>
                                         </div>
                                         <div className="text-right">
-                                            <p className="text-xs text-gray-500">Погашено</p>
+                                            <p className="text-xs text-gray-500">Оплачено</p>
                                             <p className="font-bold text-lg text-green-600">{formatCurrency(paid)}</p>
                                         </div>
                                         <div className="text-right">
@@ -388,25 +320,19 @@ export default function DebtTab({ persons }) {
                                         </div>
                                         <span className={`text-gray-400 transition-transform duration-200 self-center ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
                                     </div>
-
-                                    {/* Progress bar */}
                                     <div className="mt-3 bg-gray-200 rounded-full h-2 overflow-hidden">
-                                        <div
-                                            className={`h-full rounded-full transition-all duration-500 ${progress >= 100 ? 'bg-green-500' : progress > 50 ? 'bg-yellow-500' : 'bg-red-400'}`}
-                                            style={{ width: `${progress}%` }}
-                                        ></div>
+                                        <div className={`h-full rounded-full transition-all duration-500 ${progress >= 100 ? 'bg-green-500' : progress > 50 ? 'bg-yellow-500' : 'bg-red-400'}`}
+                                            style={{ width: `${progress}%` }}></div>
                                     </div>
-                                    <p className="text-xs text-gray-400 mt-1">{Math.round(progress)}% погашено</p>
+                                    <p className="text-xs text-gray-400 mt-1">{Math.round(progress)}% оплачено</p>
                                 </div>
 
-                                {/* Expanded details */}
                                 {isExpanded && (
                                     <div className="border-t border-gray-200 bg-gray-50/50 p-4 space-y-4">
-                                        {/* Payment history */}
                                         <div>
-                                            <h4 className="text-sm font-semibold text-gray-700 mb-2">История погашений</h4>
+                                            <h4 className="text-sm font-semibold text-gray-700 mb-2">История оплат</h4>
                                             {(debt.debt_payments || []).length === 0 ? (
-                                                <p className="text-sm text-gray-400 py-2">Погашений ещё не было</p>
+                                                <p className="text-sm text-gray-400 py-2">Оплат ещё не было</p>
                                             ) : (
                                                 <div className="overflow-x-auto rounded-lg border border-gray-200">
                                                     <table className="min-w-full text-sm">
@@ -427,12 +353,8 @@ export default function DebtTab({ persons }) {
                                                                     <td className="px-3 py-2 font-medium text-green-600">{formatCurrency(p.amount)}</td>
                                                                     <td className="px-3 py-2 text-gray-500">{p.description || '—'}</td>
                                                                     <td className="px-3 py-2 text-right">
-                                                                        <button
-                                                                            onClick={(e) => { e.stopPropagation(); handleDeletePayment(p.id); }}
-                                                                            className="text-red-400 hover:text-red-600 text-xs font-medium"
-                                                                        >
-                                                                            Удалить
-                                                                        </button>
+                                                                        <button onClick={(e) => { e.stopPropagation(); handleDeletePayment(p.id); }}
+                                                                            className="text-red-400 hover:text-red-600 text-xs font-medium">Удалить</button>
                                                                     </td>
                                                                 </tr>
                                                             ))}
@@ -442,96 +364,58 @@ export default function DebtTab({ persons }) {
                                             )}
                                         </div>
 
-                                        {/* Add partial payment */}
                                         {!debt.is_settled && (
                                             <div>
                                                 {payingDebtId === debt.id ? (
                                                     <form onSubmit={(e) => handlePayDebt(e, debt.id)} className="bg-green-50 p-4 rounded-xl border border-green-200 space-y-3">
-                                                        <h4 className="text-sm font-semibold text-green-800">💵 Внести погашение</h4>
+                                                        <h4 className="text-sm font-semibold text-green-800">💵 Внести оплату</h4>
                                                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                                             <div>
                                                                 <label className="block text-xs font-medium text-gray-600 mb-1">Сумма</label>
-                                                                <input
-                                                                    type="number"
-                                                                    step="0.01"
-                                                                    value={payAmount}
-                                                                    onChange={e => setPayAmount(e.target.value)}
-                                                                    placeholder={`Макс. ${remaining}`}
-                                                                    required
-                                                                    className="w-full p-2 border rounded-lg text-sm"
-                                                                />
+                                                                <input type="number" step="0.01" value={payAmount} onChange={e => setPayAmount(e.target.value)}
+                                                                    placeholder={`Макс. ${remaining}`} required className="w-full p-2 border rounded-lg text-sm" />
                                                             </div>
                                                             <div>
                                                                 <label className="block text-xs font-medium text-gray-600 mb-1">Дата</label>
-                                                                <input
-                                                                    type="date"
-                                                                    value={payDate}
-                                                                    onChange={e => setPayDate(e.target.value)}
-                                                                    required
-                                                                    className="w-full p-2 border rounded-lg text-sm"
-                                                                />
+                                                                <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)}
+                                                                    required className="w-full p-2 border rounded-lg text-sm" />
                                                             </div>
                                                             <div>
                                                                 <label className="block text-xs font-medium text-gray-600 mb-1">Комментарий</label>
-                                                                <input
-                                                                    type="text"
-                                                                    value={payDescription}
-                                                                    onChange={e => setPayDescription(e.target.value)}
-                                                                    placeholder="(необязательно)"
-                                                                    className="w-full p-2 border rounded-lg text-sm"
-                                                                />
+                                                                <input type="text" value={payDescription} onChange={e => setPayDescription(e.target.value)}
+                                                                    placeholder="(необязательно)" className="w-full p-2 border rounded-lg text-sm" />
                                                             </div>
                                                         </div>
                                                         <div className="flex gap-2">
-                                                            <button
-                                                                type="submit"
-                                                                disabled={isPayingDebt}
-                                                                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:bg-gray-300"
-                                                            >
+                                                            <button type="submit" disabled={isPayingDebt}
+                                                                className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:bg-gray-300">
                                                                 {isPayingDebt ? 'Сохранение...' : 'Сохранить'}
                                                             </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => { e.stopPropagation(); setPayingDebtId(null); }}
-                                                                className="px-4 py-2 bg-gray-200 rounded-lg text-sm font-medium"
-                                                            >
-                                                                Отмена
-                                                            </button>
+                                                            <button type="button" onClick={(e) => { e.stopPropagation(); setPayingDebtId(null); }}
+                                                                className="px-4 py-2 bg-gray-200 rounded-lg text-sm font-medium">Отмена</button>
                                                         </div>
                                                     </form>
                                                 ) : (
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setPayingDebtId(debt.id);
-                                                            setPayAmount('');
-                                                            setPayDescription('');
-                                                            setPayDate(new Date().toISOString().slice(0, 10));
-                                                        }}
-                                                        className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shadow-sm"
-                                                    >
-                                                        💵 Внести часть долга
+                                                    <button onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setPayingDebtId(debt.id); setPayAmount(''); setPayDescription('');
+                                                        setPayDate(new Date().toISOString().slice(0, 10));
+                                                    }} className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shadow-sm">
+                                                        💵 Внести часть оплаты
                                                     </button>
                                                 )}
                                             </div>
                                         )}
 
-                                        {/* Debt actions */}
                                         <div className="flex gap-2 pt-2 border-t border-gray-200">
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); handleToggleSettled(debt.id, debt.is_settled); }}
+                                            <button onClick={(e) => { e.stopPropagation(); handleToggleSettled(debt.id, debt.is_settled); }}
                                                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                                                    debt.is_settled
-                                                        ? 'bg-orange-100 text-orange-700 hover:bg-orange-200'
-                                                        : 'bg-green-100 text-green-700 hover:bg-green-200'
-                                                }`}
-                                            >
-                                                {debt.is_settled ? '↩ Вернуть в активные' : '✅ Отметить как погашен'}
+                                                    debt.is_settled ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-green-100 text-green-700 hover:bg-green-200'
+                                                }`}>
+                                                {debt.is_settled ? '↩ Вернуть в активные' : '✅ Отметить как закрытый'}
                                             </button>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); handleDeleteDebt(debt.id); }}
-                                                className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200 transition-colors"
-                                            >
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteDebt(debt.id); }}
+                                                className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-xs font-medium hover:bg-red-200 transition-colors">
                                                 🗑 Удалить долг
                                             </button>
                                         </div>

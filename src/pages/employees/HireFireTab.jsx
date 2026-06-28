@@ -26,6 +26,7 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
     const [newPeriodEndDate, setNewPeriodEndDate] = useState('');
     const [newPeriodBatchId, setNewPeriodBatchId] = useState('');
     const [newPeriodRate, setNewPeriodRate] = useState('');
+    const [newPeriodSalaryTiers, setNewPeriodSalaryTiers] = useState([]);
 
     // Удаление
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -177,6 +178,8 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
         setNewPeriodEndDate('');
         setNewPeriodBatchId('');
         setNewPeriodRate(recentEmployment?.rate || '');
+        const tiers = Array.isArray(recentEmployment?.salary_tiers) ? recentEmployment.salary_tiers.map(t => ({ days: String(t.days || ''), rate: String(t.rate || '') })) : [];
+        setNewPeriodSalaryTiers(tiers);
         setIsAddingPeriod(true);
         setIsEditing(false);
     };
@@ -203,6 +206,7 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
                 rate: Number(newPeriodRate) || 0,
                 is_active: !newPeriodEndDate,
                 user_id: user?.id,
+                salary_tiers: newPeriodSalaryTiers.filter(t => Number(t.days) > 0).map(t => ({ days: Number(t.days), rate: Number(t.rate) || 0 })),
             });
 
             if (error) {
@@ -379,6 +383,68 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
                                     <div><label className="text-sm font-medium">Основная ставка/день</label><input type="number" step="0.01" value={editRate} onChange={e => setEditRate(e.target.value)} className="w-full p-2.5 border rounded-xl mt-1" /></div>
                                     <div><label className="text-sm font-medium">Дней отсутствия</label><input type="number" value={editAbsentDays} onChange={e => setEditAbsentDays(e.target.value)} className="w-full p-2.5 border rounded-xl mt-1" /></div>
                                 </div>
+
+                                {/* Ступени ставок */}
+                                <div className="mt-4 p-4 bg-white rounded-xl border border-blue-200">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <label className="text-sm font-semibold text-indigo-700">📊 Ступени ставок (первые N дней по другой ставке)</label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditSalaryTiers([...editSalaryTiers, { days: '', rate: '' }])}
+                                            className="text-xs px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 font-medium"
+                                        >
+                                            + Добавить ступень
+                                        </button>
+                                    </div>
+                                    {editSalaryTiers.length === 0 ? (
+                                        <p className="text-xs text-gray-400">Нет ступеней — все дни по основной ставке ({editRate || 0}/день)</p>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {editSalaryTiers.map((tier, idx) => (
+                                                <div key={idx} className="flex items-center gap-2">
+                                                    <span className="text-xs text-gray-500 w-6 text-center font-medium">{idx + 1}.</span>
+                                                    <div className="flex-1">
+                                                        <input
+                                                            type="number"
+                                                            placeholder="Дней"
+                                                            value={tier.days}
+                                                            onChange={e => {
+                                                                const updated = [...editSalaryTiers];
+                                                                updated[idx] = { ...updated[idx], days: e.target.value };
+                                                                setEditSalaryTiers(updated);
+                                                            }}
+                                                            className="w-full p-2 border rounded-lg text-sm"
+                                                        />
+                                                    </div>
+                                                    <span className="text-xs text-gray-500">дн. по</span>
+                                                    <div className="flex-1">
+                                                        <input
+                                                            type="number"
+                                                            step="0.01"
+                                                            placeholder="Ставка"
+                                                            value={tier.rate}
+                                                            onChange={e => {
+                                                                const updated = [...editSalaryTiers];
+                                                                updated[idx] = { ...updated[idx], rate: e.target.value };
+                                                                setEditSalaryTiers(updated);
+                                                            }}
+                                                            className="w-full p-2 border rounded-lg text-sm"
+                                                        />
+                                                    </div>
+                                                    <span className="text-xs text-gray-500">/день</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setEditSalaryTiers(editSalaryTiers.filter((_, i) => i !== idx))}
+                                                        className="text-red-400 hover:text-red-600 text-sm"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <p className="text-xs text-gray-400 mt-2">Остальные дни оплачиваются по основной ставке ({editRate || 0}/день)</p>
+                                </div>
                                 <div className="flex gap-3 mt-4">
                                     <button type="submit" disabled={isSaving} className="bg-green-600 text-white px-5 py-2.5 rounded-xl font-medium shadow-sm">Сохранить</button>
                                     <button type="button" onClick={handleCancelEdit} className="bg-gray-200 px-5 py-2.5 rounded-xl font-medium">Отмена</button>
@@ -410,9 +476,71 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
                                         <input type="date" value={newPeriodEndDate} onChange={e => setNewPeriodEndDate(e.target.value)} className="w-full p-2.5 border border-red-200 rounded-xl mt-1" />
                                     </div>
                                     <div>
-                                        <label className="text-sm font-medium">Ставка/день</label>
+                                        <label className="text-sm font-medium">Основная ставка/день</label>
                                         <input type="number" step="0.01" value={newPeriodRate} onChange={e => setNewPeriodRate(e.target.value)} className="w-full p-2.5 border rounded-xl mt-1" />
                                     </div>
+                                </div>
+
+                                {/* Ступени ставок для нового периода */}
+                                <div className="mt-4 p-4 bg-white rounded-xl border border-emerald-200">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <label className="text-sm font-semibold text-emerald-700">📊 Ступени ставок</label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setNewPeriodSalaryTiers([...newPeriodSalaryTiers, { days: '', rate: '' }])}
+                                            className="text-xs px-3 py-1 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 font-medium"
+                                        >
+                                            + Добавить ступень
+                                        </button>
+                                    </div>
+                                    {newPeriodSalaryTiers.length === 0 ? (
+                                        <p className="text-xs text-gray-400">Нет ступеней — все дни по основной ставке</p>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {newPeriodSalaryTiers.map((tier, idx) => (
+                                                <div key={idx} className="flex items-center gap-2">
+                                                    <span className="text-xs text-gray-500 w-6 text-center font-medium">{idx + 1}.</span>
+                                                    <div className="flex-1">
+                                                        <input
+                                                            type="number"
+                                                            placeholder="Дней"
+                                                            value={tier.days}
+                                                            onChange={e => {
+                                                                const updated = [...newPeriodSalaryTiers];
+                                                                updated[idx] = { ...updated[idx], days: e.target.value };
+                                                                setNewPeriodSalaryTiers(updated);
+                                                            }}
+                                                            className="w-full p-2 border rounded-lg text-sm"
+                                                        />
+                                                    </div>
+                                                    <span className="text-xs text-gray-500">дн. по</span>
+                                                    <div className="flex-1">
+                                                        <input
+                                                            type="number"
+                                                            step="0.01"
+                                                            placeholder="Ставка"
+                                                            value={tier.rate}
+                                                            onChange={e => {
+                                                                const updated = [...newPeriodSalaryTiers];
+                                                                updated[idx] = { ...updated[idx], rate: e.target.value };
+                                                                setNewPeriodSalaryTiers(updated);
+                                                            }}
+                                                            className="w-full p-2 border rounded-lg text-sm"
+                                                        />
+                                                    </div>
+                                                    <span className="text-xs text-gray-500">/день</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setNewPeriodSalaryTiers(newPeriodSalaryTiers.filter((_, i) => i !== idx))}
+                                                        className="text-red-400 hover:text-red-600 text-sm"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <p className="text-xs text-gray-400 mt-2">Остальные дни оплачиваются по основной ставке ({newPeriodRate || 0}/день)</p>
                                 </div>
                                 <div className="flex gap-3 mt-4">
                                     <button type="submit" disabled={isSaving} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl font-medium shadow-sm hover:bg-emerald-700 disabled:bg-gray-300">
