@@ -23,7 +23,11 @@ function MedicinesPage() {
     const [unit, setUnit] = useState('шт');
     const [pricePerUnit, setPricePerUnit] = useState('');
     const [description, setDescription] = useState('');
+    const [company, setCompany] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // --- Фильтр по фирме ---
+    const [filterCompany, setFilterCompany] = useState('');
 
     // --- Форма платежа ---
     const [paymentAmount, setPaymentAmount] = useState('');
@@ -56,8 +60,19 @@ function MedicinesPage() {
 
     // --- Фильтрованные транзакции ---
     const filteredTransactions = useMemo(() => {
-        return transactions.filter(t => showHidden ? true : !t.is_hidden);
-    }, [transactions, showHidden]);
+        return transactions.filter(t => {
+            if (!showHidden && t.is_hidden) return false;
+            if (filterCompany && (t.company || '') !== filterCompany) return false;
+            return true;
+        });
+    }, [transactions, showHidden, filterCompany]);
+
+    // --- Уникальные фирмы ---
+    const uniqueCompanies = useMemo(() => {
+        const set = new Set();
+        transactions.forEach(t => { if (t.company) set.add(t.company); });
+        return Array.from(set).sort();
+    }, [transactions]);
 
     // --- Дашборд считается из видимых записей ---
     const summary = useMemo(() => {
@@ -113,13 +128,14 @@ function MedicinesPage() {
             price_per_unit: price,
             amount: totalAmount,
             description: description || null,
+            company: company || null,
             user_id: user.id
         }]);
 
         if (error) {
             alert('Ошибка: ' + error.message);
         } else {
-            setQuantity(''); setPricePerUnit(''); setDescription(''); setMedicineId('');
+            setQuantity(''); setPricePerUnit(''); setDescription(''); setMedicineId(''); setCompany('');
             await fetchData();
         }
         setIsSubmitting(false);
@@ -228,6 +244,16 @@ function MedicinesPage() {
                         value={description} onChange={e => setDescription(e.target.value)}
                         className="mt-1 w-full p-2 border rounded-md" />
                 </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">Фирма</label>
+                    <input type="text" placeholder="Название фирмы"
+                        value={company} onChange={e => setCompany(e.target.value)}
+                        list="company-suggestions"
+                        className="mt-1 w-full p-2 border rounded-md" />
+                    <datalist id="company-suggestions">
+                        {uniqueCompanies.map(c => <option key={c} value={c} />)}
+                    </datalist>
+                </div>
             </div>
             {quantity && pricePerUnit && (
                 <div className="text-sm text-gray-600">
@@ -278,6 +304,16 @@ function MedicinesPage() {
                         className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
                     <span className="ml-2">Показать скрытые позиции</span>
                 </label>
+                {uniqueCompanies.length > 0 && (
+                    <select
+                        value={filterCompany}
+                        onChange={e => setFilterCompany(e.target.value)}
+                        className="p-2 border border-gray-300 rounded-lg text-sm bg-white"
+                    >
+                        <option value="">Все фирмы</option>
+                        {uniqueCompanies.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                )}
             </div>
 
             {/* === ДАШБОРД === */}
@@ -422,6 +458,7 @@ function MedicinesPage() {
                                 <th className="px-4 py-3">Кол-во</th>
                                 <th className="px-4 py-3">Цена за ед.</th>
                                 <th className="px-4 py-3">Сумма</th>
+                                <th className="px-4 py-3">Фирма</th>
                                 <th className="px-4 py-3">Описание</th>
                                 <th className="px-4 py-3 text-right">Действия</th>
                             </tr>
@@ -430,7 +467,7 @@ function MedicinesPage() {
                             {loading ? (
                                 <tr><td colSpan="8" className="text-center py-8 text-gray-400">Загрузка...</td></tr>
                             ) : filteredTransactions.length === 0 ? (
-                                <tr><td colSpan="8" className="text-center py-8 text-gray-400">Операций пока нет.</td></tr>
+                                <tr><td colSpan="9" className="text-center py-8 text-gray-400">Операций пока нет.</td></tr>
                             ) : filteredTransactions.map(t => {
                                 const typeInfo = typeLabels[t.transaction_type] || {};
                                 return (
@@ -460,6 +497,9 @@ function MedicinesPage() {
                                             t.transaction_type === 'debt' ? 'text-orange-600' : 'text-blue-600'
                                         }`}>
                                             {t.transaction_type === 'payment' ? '−' : '+'}{formatCurrency(t.amount)}
+                                        </td>
+                                        <td className="px-4 py-3 text-gray-600 text-xs max-w-[120px] truncate" title={t.company}>
+                                            {t.company || '–'}
                                         </td>
                                         <td className="px-4 py-3 text-gray-600 text-xs max-w-[150px] truncate" title={t.description}>
                                             {t.description || '–'}
