@@ -150,25 +150,10 @@ export default function HireFireTab({ persons, activeBatches, fetchPersons }) {
         if (!selectedPerson) return;
         setIsDeleting(true);
 
-        // Delete salaries through employee_ids since salaries table uses employee_id, not person_id
-        const employeeIds = (selectedPerson.employees || []).map(emp => emp.id);
-        if (employeeIds.length > 0) {
-            const { error: salariesError } = await supabase.from('salaries').delete().in('employee_id', employeeIds);
-            if (salariesError) {
-                alert('Ошибка при удалении выплат: ' + salariesError.message);
-                setIsDeleting(false); return;
-            }
-        }
-
-        const { error: empError } = await supabase.from('employees').delete().eq('person_id', selectedPerson.id);
-        if (empError) {
-            alert('Ошибка при удалении периодов: ' + empError.message);
-            setIsDeleting(false); return;
-        }
-
+        // Just delete the person — ON DELETE CASCADE will remove employees and their salaries automatically
         const { error: personError } = await supabase.from('persons').delete().eq('id', selectedPerson.id);
         if (personError) {
-            alert('Ошибка при удалении физлица: ' + personError.message);
+            alert('Ошибка при удалении: ' + personError.message);
         } else {
             await fetchPersons();
             setSelectedPerson(null);
